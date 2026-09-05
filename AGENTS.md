@@ -79,65 +79,23 @@ bd prime                # Refresh Beads context
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
 
-## topmatic — Project Guide
+## topmatic
 
-TUI + CLI that schedules user-level updates via topgrade as backend. No sudo anywhere; topgrade always runs with `--config <topmatic-owned file>`, never reading the user's own `topgrade.toml`.
+User-level update scheduler on top of topgrade, no sudo. topgrade always runs with `--config` pointing to a topmatic-owned file; the user's own `topgrade.toml` is never read.
 
-### Environment quirks (this host)
+### Non-negotiables
 
-- rustup and `bd` are installed but **not in the default shell PATH**. Prefix commands with:
-  `export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"`
-- Host has a systemd user session, topgrade 17.9+ and flatpak — real end-to-end verification is possible here; the devcontainer has none of these (by design, tests never require them).
-- `cp`/`mv`/`rm` may be aliased interactive — always use `-f`/`-rf` forms.
+- First command in every shell: `export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"`
+- `just --list` is the command reference; `just check` before every commit
+- bd for tasks (`ready`/`--claim`/`close`), `bd remember` for decisions, `bd prime` to load context
+- Code, commits, messages: English. No comments in source (`#[command(about)]` for clap help)
+- TDD; **fixtures must be captured from real tool output, never invented** (a fabricated timestamp format once hid a bug)
+- Tests never touch real systemd/topgrade (stubs in tempdirs); container = gate, host = integration (`just verify <profile>`)
 
-### Devcontainer flow (two-tier, verified)
+### Gotchas
 
-- **Container = portable quality gate only**: `make check` (fmt/clippy/tests) runs green inside `topmatic-dev` because tests use stubs and never touch systemd/topgrade/notify-send.
-- **Host = integration environment**: anything involving `topmatic sync`, timers, the TUI against real units, or real topgrade runs must happen on the host. Never try to "fix" the container to fake this.
-- CLI gate without VS Code (docker is podman here; `--userns=keep-id` keeps file ownership on uid 1000): `just container-gate`. It always rebuilds the image first (fast with layer cache) and persists the cargo deps cache in the `topmatic-cargo` named volume over `/usr/local/cargo` (CARGO_HOME; world-writable in the image, toolchain lives separately in RUSTUP_HOME). `just shell` drops into the same environment interactively.
-- VS Code / devcontainer CLI uses `.devcontainer/devcontainer.json` directly (same image).
-- Gotcha fixed once: beads' install script must run as the `vscode` user (installs to `/home/vscode/.local/bin`); running it as root silently breaks the `/usr/local/bin/bd` symlink.
-
-### Commands
-
-Task runner is **just** (`justfile`, replaces Makefile). `just` lives in `~/.local/bin` on the host and inside the devcontainer image.
-
-- `just check` — full gate: `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test`. Run before every commit.
-- `just one <name>` — single test; integration tests live in `tests/runner_integration.rs`.
-- `just deploy` — release build + install to `~/.cargo/bin/topmatic` (where the systemd unit's `ExecStart` points).
-- `just fixture` — regenerate `tests/fixtures/topgrade_help.txt` from the installed topgrade.
-- `just image` / `just container-gate` — build devcontainer image / run the gate inside it.
-- `just verify <profile>` — host-side dry-run of a profile.
-- CLI surface for manual checks: `topmatic sync | list | edit | run <profile> [--dry-run]`.
-
-**Pipeline gotcha**: `cargo test | tail` swallows the exit code and lets `&&` chains continue on red. Use `set -o pipefail` or grep the summary (`test result:`), never bare pipes into `&&`.
-
-### Architecture
-
-- Entry: `src/main.rs` (clap dispatch) → `topmatic::tui::run()` for the default TUI; `App::boot()` in `src/tui/mod.rs` loads config, runs declarative sync, rebuilds rows.
-- `src/domain/` — pure logic (profile, schedule→OnCalendar, topgrade argv, steps catalog). No I/O.
-- `src/runner/` — headless run: flock, log tee, status JSON, `NotifyBackend` trait.
-- `src/systemd/` — unit generation (`Scope::User|System` parameterizes paths/verbs; System scope is modeled but intentionally unimplemented), `SystemdCtl` trait, declarative sync with orphan cleanup. `FakeCtl` is `#[cfg(test)]`.
-- Declarative core: `~/.config/topmatic/config.toml` is the source of truth; every TUI open/save and `topmatic sync` converges systemd units to it (and deletes `topmatic@*` orphans).
-
-### Testing conventions
-
-- TDD red-green-refactor; a bug found at any level gets a reproducing unit test before the fix.
-- Integration tests are self-contained: stub `topgrade`/`notify-send` shell scripts are written into tempdirs at runtime (records argv/notifications to files next to the stub — no env vars needed).
-- `tests/fixtures/topgrade_help.txt` is real `topgrade --help` output; regenerate with `topgrade --help > tests/fixtures/topgrade_help.txt` when topgrade's step list changes.
-- Edition 2024: `std::env::set_var/remove_var` are unsafe — tests must not mutate env. Use `Paths::with_bases(...)` instead of `Paths::from_env()`. Let-chains (`if let ... && ...`) are used.
-
-### Style rules (user-enforced)
-
-- Code, commits, messages: **English only**.
-- **No comments in source** — if code needs explaining, improve the code. Clap help text uses `#[command(about = "...")]` attributes, not doc comments.
-- One logical change per commit, imperative subject.
-
-### Live-system caution
-
-- `topmatic sync`, the TUI and `systemctl --user start topmatic@*` modify the **real** user systemd manager and run real updates. Always verify with `run <profile> --dry-run` first.
-- The `flatpak-daily` profile on this machine is the user's active production timer — do not delete or disable it without asking.
-
-### Decisions log
-
-Durable design decisions (config isolation, spread-schedule defaults, linger policy, Scope roadmap) are stored via `bd remember` — run `bd prime` to load them; add new ones with `bd remember`.
+- Edition 2024: env mutation is unsafe in tests — use `Paths::with_bases`, never `set_var`
+- Pipes swallow cargo exit codes — `set -o pipefail` before `&&` chains
+- `flatpak-daily` on this host is the user's production timer — never delete/disable without asking
+- `topmatic sync`/TUI touch the real user systemd manager; dry-run first when verifying
+- Screenshots: regenerate from `docs/assets/*.tape` with vhs (last frame via ffmpeg; vhs PNG `Output` is unreliable)

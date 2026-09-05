@@ -41,7 +41,7 @@ topmatic run <profile> [--dry-run]
 topmatic reset [--all]   # remove units/schedules/history; --all also archives the config
 ```
 
-In the TUI: `n` new, `e` edit, `space` pause/resume, `d` delete, `r` run now, `t` dry-run test, `l` logs, `?` help.
+In the TUI: `n` new, `e` edit, `space` pause/resume, `d` delete, `r` run now, `t` dry-run test, `l` logs, `/` filter, mouse click/scroll, `?` help. The right pane shows live details for the selected profile: schedule, countdown to next fire, timer state and the tail of the last run log.
 
 ![editor](docs/assets/editor.png)
 

@@ -326,6 +326,13 @@ impl SystemdCtl for FakeCtl {
         None
     }
 
+    fn timer_active(&self, profile: &str) -> bool {
+        self.calls
+            .borrow()
+            .iter()
+            .any(|call| call == &format!("enable:{profile}"))
+    }
+
     fn linger_enabled(&self) -> Option<bool> {
         self.linger
     }

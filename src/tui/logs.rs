@@ -93,6 +93,16 @@ pub fn list_runs(paths: &Paths, profile: &str) -> Vec<PathBuf> {
     entries
 }
 
+pub fn tail(paths: &Paths, profile: &str, lines: usize) -> Option<String> {
+    let newest = list_runs(paths, profile).into_iter().next()?;
+    let content = std::fs::read_to_string(newest).ok()?;
+    let mut tail: Vec<&str> = content.lines().collect();
+    if tail.len() > lines {
+        tail = tail.split_off(tail.len() - lines);
+    }
+    Some(tail.join("\n"))
+}
+
 pub fn render(state: &LogsState, frame: &mut Frame, area: Rect) {
     if let Some(content) = &state.content {
         let paragraph = Paragraph::new(content.clone())
@@ -172,5 +182,20 @@ mod tests {
     fn missing_logs_dir_yields_empty_list() {
         let paths = Paths::with_bases(PathBuf::from("/nope/c"), PathBuf::from("/nope/s"));
         assert!(list_runs(&paths, "ghost").is_empty());
+    }
+
+    #[test]
+    fn tail_returns_last_lines_of_newest_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let dir = paths.logs_dir("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("20260101-010101.log"), "old1\nold2\n").unwrap();
+        let newest = "l1\nl2\nl3\nl4\n".to_string();
+        std::fs::write(dir.join("20260202-020202.log"), &newest).unwrap();
+
+        assert_eq!(tail(&paths, "alpha", 2).unwrap(), "l3\nl4");
+        assert_eq!(tail(&paths, "alpha", 10).unwrap(), "l1\nl2\nl3\nl4");
+        assert!(tail(&paths, "ghost", 5).is_none());
     }
 }

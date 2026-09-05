@@ -95,6 +95,7 @@ pub struct EditorState {
     pub schedule_index: usize,
     pub option_index: usize,
     pub action_index: usize,
+    pub typed_digits: String,
 }
 
 pub enum EditorEvent {
@@ -128,6 +129,7 @@ impl EditorState {
                 schedule_index: 0,
                 option_index: 0,
                 action_index: 0,
+                typed_digits: String::new(),
             },
             None => Self {
                 creating: true,
@@ -145,6 +147,7 @@ impl EditorState {
                 schedule_index: 0,
                 option_index: 0,
                 action_index: 0,
+                typed_digits: String::new(),
             },
         }
     }
@@ -258,16 +261,72 @@ impl EditorState {
 
     fn handle_schedule_key(&mut self, key: KeyEvent) -> EditorEvent {
         let rows = self.schedule_rows();
+        let numeric = matches!(
+            self.schedule_field(),
+            ScheduleField::Hours | ScheduleField::Hour | ScheduleField::Minute
+        );
         match key.code {
-            KeyCode::Up => self.schedule_index = self.schedule_index.saturating_sub(1),
+            KeyCode::Char(c) if c.is_ascii_digit() && numeric => {
+                if self.typed_digits.len() >= 2 {
+                    self.typed_digits.clear();
+                }
+                self.typed_digits.push(c);
+                if self.typed_digits.len() == 2 {
+                    self.commit_typed();
+                }
+            }
+            KeyCode::Backspace if numeric && !self.typed_digits.is_empty() => {
+                self.typed_digits.pop();
+            }
+            KeyCode::Up => {
+                self.commit_typed();
+                self.schedule_index = self.schedule_index.saturating_sub(1);
+            }
             KeyCode::Down => {
+                self.commit_typed();
                 if self.schedule_index + 1 < rows {
                     self.schedule_index += 1;
                 }
             }
-            _ => self.adjust_schedule(key),
+            _ => {
+                if self.typed_digits.is_empty() {
+                    self.adjust_schedule(key);
+                } else {
+                    self.commit_typed();
+                }
+            }
         }
         EditorEvent::None
+    }
+
+    fn commit_typed(&mut self) {
+        if self.typed_digits.is_empty() {
+            return;
+        }
+        let value: u32 = self.typed_digits.parse().unwrap_or(0);
+        match self.schedule_field() {
+            ScheduleField::Hours => {
+                if let SchedulePreset::EveryNHours { hours } = &mut self.schedule.preset {
+                    *hours = clamp(value.max(1), 1, 23);
+                }
+            }
+            ScheduleField::Hour => set_hour_value(&mut self.schedule.preset, value.min(23)),
+            ScheduleField::Minute => set_minute_value(&mut self.schedule.preset, value.min(59)),
+            _ => {}
+        }
+        self.typed_digits.clear();
+    }
+
+    pub fn typed_hint(&self) -> String {
+        if self.typed_digits.is_empty() {
+            return String::new();
+        }
+        match self.schedule_field() {
+            ScheduleField::Hours | ScheduleField::Hour | ScheduleField::Minute => {
+                format!(" [{}…]", self.typed_digits)
+            }
+            _ => String::new(),
+        }
     }
 
     fn schedule_rows(&self) -> usize {
@@ -475,10 +534,28 @@ fn set_hour(preset: &mut SchedulePreset, delta: i64) {
     }
 }
 
+fn set_hour_value(preset: &mut SchedulePreset, value: u32) {
+    match preset {
+        SchedulePreset::Daily { hour, .. } | SchedulePreset::Weekly { hour, .. } => {
+            *hour = value.min(23);
+        }
+        _ => {}
+    }
+}
+
 fn set_minute(preset: &mut SchedulePreset, delta: i64) {
     match preset {
         SchedulePreset::Daily { minute, .. } | SchedulePreset::Weekly { minute, .. } => {
             *minute = ((*minute as i64 + delta).rem_euclid(60)) as u32;
+        }
+        _ => {}
+    }
+}
+
+fn set_minute_value(preset: &mut SchedulePreset, value: u32) {
+    match preset {
+        SchedulePreset::Daily { minute, .. } | SchedulePreset::Weekly { minute, .. } => {
+            *minute = value.min(59);
         }
         _ => {}
     }
@@ -636,6 +713,59 @@ mod tests {
         editor.schedule.randomized_delay_sec = 900;
         editor.adjust_schedule(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
         assert_eq!(editor.schedule.randomized_delay_sec, 960);
+    }
+
+    #[test]
+    fn typed_digits_set_time_fields() {
+        let mut editor = new_editor();
+        editor.schedule.preset = SchedulePreset::Daily {
+            hour: 12,
+            minute: 0,
+        };
+        editor.section = Section::Schedule;
+        editor.schedule_index = 1;
+
+        editor.handle_key(key(KeyCode::Char('0')));
+        editor.handle_key(key(KeyCode::Char('9')));
+        match &editor.schedule.preset {
+            SchedulePreset::Daily { hour, .. } => assert_eq!(*hour, 9),
+            other => panic!("unexpected preset {other:?}"),
+        }
+        assert!(editor.typed_digits.is_empty(), "two digits auto-commit");
+
+        editor.handle_key(key(KeyCode::Char('4')));
+        editor.handle_key(key(KeyCode::Down));
+        match &editor.schedule.preset {
+            SchedulePreset::Daily { hour, .. } => assert_eq!(*hour, 4),
+            other => panic!("unexpected preset {other:?}"),
+        }
+
+        editor.handle_key(key(KeyCode::Up));
+        editor.handle_key(key(KeyCode::Char('9')));
+        editor.handle_key(key(KeyCode::Backspace));
+        editor.handle_key(key(KeyCode::Char('7')));
+        editor.handle_key(key(KeyCode::Right));
+        match &editor.schedule.preset {
+            SchedulePreset::Daily { hour, .. } => assert_eq!(*hour, 7),
+            other => panic!("unexpected preset {other:?}"),
+        }
+    }
+
+    #[test]
+    fn typed_digits_clamp_out_of_range_values() {
+        let mut editor = new_editor();
+        editor.schedule.preset = SchedulePreset::Daily {
+            hour: 12,
+            minute: 0,
+        };
+        editor.section = Section::Schedule;
+        editor.schedule_index = 1;
+        editor.handle_key(key(KeyCode::Char('9')));
+        editor.handle_key(key(KeyCode::Char('9')));
+        match &editor.schedule.preset {
+            SchedulePreset::Daily { hour, .. } => assert_eq!(*hour, 23),
+            other => panic!("unexpected preset {other:?}"),
+        }
     }
 
     #[test]

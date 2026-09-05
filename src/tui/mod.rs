@@ -3,11 +3,15 @@ mod editor;
 mod input;
 mod logs;
 
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -20,6 +24,8 @@ use crate::domain::steps::{CURATED, StepEntry};
 use crate::paths::Paths;
 use crate::runner::{self, RunOutcome, notify::NullNotify, read_status};
 use crate::systemd::{RealSystemdCtl, SystemdCtl, sync as systemd_sync};
+
+use input::LineEdit;
 
 pub enum View {
     Dashboard,
@@ -39,6 +45,9 @@ pub struct App {
     pub view: View,
     pub selected: usize,
     pub rows: Vec<dashboard::ProfileRow>,
+    pub filter: LineEdit,
+    pub filter_editing: bool,
+    pub list_area: Cell<Rect>,
     pub message: String,
     pub run_rx: Option<mpsc::Receiver<Result<RunOutcome, String>>>,
     pub should_quit: bool,
@@ -46,7 +55,9 @@ pub struct App {
 
 pub fn run() -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
+    let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
     let result = app_loop(&mut terminal);
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
 }
@@ -55,11 +66,16 @@ fn app_loop(terminal: &mut ratatui::DefaultTerminal) -> anyhow::Result<()> {
     let mut app = App::boot()?;
     loop {
         terminal.draw(|frame| app.draw(frame))?;
-        if event::poll(Duration::from_millis(200))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            app.handle_key(key);
+        if event::poll(Duration::from_millis(200))? {
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        app.handle_key(key);
+                    }
+                }
+                Event::Mouse(mouse) => app.handle_mouse(mouse),
+                _ => {}
+            }
         }
         app.poll_background_run();
         if app.should_quit {
@@ -91,6 +107,9 @@ impl App {
             view: View::Dashboard,
             selected: 0,
             rows: Vec::new(),
+            filter: LineEdit::new(String::new()),
+            filter_editing: false,
+            list_area: Cell::new(Rect::default()),
             message: String::new(),
             run_rx: None,
             should_quit: false,
@@ -170,10 +189,45 @@ impl App {
                     None
                 },
                 status: read_status(&self.paths, &profile.name).ok().flatten(),
+                timer_active: profile.enabled && self.ctl.timer_active(&profile.name),
             })
             .collect();
-        if self.selected >= self.rows.len() {
-            self.selected = self.rows.len().saturating_sub(1);
+        self.clamp_selection();
+    }
+
+    pub fn visible_rows(&self) -> Vec<&dashboard::ProfileRow> {
+        let needle = self.filter.value.to_lowercase();
+        self.rows
+            .iter()
+            .filter(|row| needle.is_empty() || row.name.to_lowercase().contains(&needle))
+            .collect()
+    }
+
+    pub fn filtering(&self) -> bool {
+        !self.filter.value.is_empty() || self.filter_editing
+    }
+
+    pub fn filter_text(&self) -> &str {
+        &self.filter.value
+    }
+
+    pub fn selected_profile(
+        &self,
+    ) -> Option<(&crate::domain::profile::Profile, &dashboard::ProfileRow)> {
+        let visible = self.visible_rows();
+        let row = visible.get(self.selected)?;
+        let profile = self.config.profile(&row.name)?;
+        Some((profile, row))
+    }
+
+    fn selected_row(&self) -> Option<&dashboard::ProfileRow> {
+        self.visible_rows().into_iter().nth(self.selected)
+    }
+
+    fn clamp_selection(&mut self) {
+        let len = self.visible_rows().len();
+        if self.selected >= len {
+            self.selected = len.saturating_sub(1);
         }
     }
 
@@ -203,14 +257,25 @@ impl App {
     }
 
     fn handle_dashboard_key(&mut self, key: KeyEvent) {
+        if self.filter_editing {
+            self.handle_filter_key(key);
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.selected + 1 < self.rows.len() {
+                if self.selected + 1 < self.visible_rows().len() {
                     self.selected += 1;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Char('/') => self.filter_editing = true,
+            KeyCode::Esc => {
+                if self.filtering() {
+                    self.filter = LineEdit::new(String::new());
+                    self.selected = 0;
+                }
+            }
             KeyCode::Char('?') => self.view = View::Help,
             KeyCode::Char('n') => {
                 self.view = View::Editor(editor::EditorState::new(None, self.catalog.clone()));
@@ -218,10 +283,8 @@ impl App {
             KeyCode::Char('e') | KeyCode::Enter => self.open_editor_for_selected(),
             KeyCode::Char(' ') => self.toggle_enabled(),
             KeyCode::Char('d') => {
-                if let Some(row) = self.rows.get(self.selected) {
-                    self.view = View::Confirm {
-                        profile: row.name.clone(),
-                    };
+                if let Some(name) = self.selected_row().map(|row| row.name.clone()) {
+                    self.view = View::Confirm { profile: name };
                 }
             }
             KeyCode::Char('r') => self.run_now(),
@@ -233,12 +296,60 @@ impl App {
         }
     }
 
+    fn handle_filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => self.filter_editing = false,
+            KeyCode::Esc => {
+                self.filter_editing = false;
+                self.filter = LineEdit::new(String::new());
+                self.selected = 0;
+            }
+            KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Down => {
+                if self.selected + 1 < self.visible_rows().len() {
+                    self.selected += 1;
+                }
+            }
+            _ => {
+                self.filter.handle_key(key);
+                self.clamp_selection();
+            }
+        }
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        let list = self.list_area.get();
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.selected = self.selected.saturating_sub(1);
+            }
+            MouseEventKind::ScrollDown => {
+                if self.selected + 1 < self.visible_rows().len() {
+                    self.selected += 1;
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left)
+                if mouse.column >= list.x
+                    && mouse.column < list.x + list.width
+                    && mouse.row > list.y
+                    && mouse.row < list.y + list.height.saturating_sub(1) =>
+            {
+                let index = (mouse.row - list.y - 1) as usize;
+                if index < self.visible_rows().len() {
+                    self.selected = index;
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn open_editor_for_selected(&mut self) {
-        if let Some(row) = self.rows.get(self.selected)
-            && let Some(profile) = self.config.profile(&row.name)
-        {
+        let profile = self
+            .selected_row()
+            .and_then(|row| self.config.profile(&row.name).cloned());
+        if let Some(profile) = profile {
             self.view = View::Editor(editor::EditorState::new(
-                Some(profile),
+                Some(&profile),
                 self.catalog.clone(),
             ));
         }
@@ -279,10 +390,9 @@ impl App {
     }
 
     fn toggle_enabled(&mut self) {
-        let Some(row) = self.rows.get(self.selected) else {
+        let Some(name) = self.selected_row().map(|row| row.name.clone()) else {
             return;
         };
-        let name = row.name.clone();
         let Some(profile) = self.config.profile_mut(&name) else {
             return;
         };
@@ -311,10 +421,9 @@ impl App {
     }
 
     fn run_now(&mut self) {
-        let Some(row) = self.rows.get(self.selected) else {
+        let Some(name) = self.selected_row().map(|row| row.name.clone()) else {
             return;
         };
-        let name = row.name.clone();
         match self.ctl.start_service(&name) {
             Ok(()) => self.message = format!("started {name} in the background"),
             Err(error) => self.message = format!("start failed: {error}"),
@@ -322,10 +431,10 @@ impl App {
     }
 
     fn dry_run_selected(&mut self) {
-        let Some(row) = self.rows.get(self.selected) else {
-            return;
-        };
-        let Some(profile) = self.config.profile(&row.name).cloned() else {
+        let profile = self
+            .selected_row()
+            .and_then(|row| self.config.profile(&row.name).cloned());
+        let Some(profile) = profile else {
             return;
         };
         let Some(topgrade) = self.topgrade_bin.clone() else {
@@ -371,8 +480,8 @@ impl App {
     }
 
     fn open_logs(&mut self) {
-        if let Some(row) = self.rows.get(self.selected) {
-            self.view = View::Logs(logs::LogsState::open(&self.paths, &row.name));
+        if let Some(name) = self.selected_row().map(|row| row.name.clone()) {
+            self.view = View::Logs(logs::LogsState::open(&self.paths, &name));
         }
     }
 
@@ -412,7 +521,10 @@ impl App {
 
         self.draw_header(frame, header);
         match &self.view {
-            View::Dashboard => dashboard::render(self, frame, body),
+            View::Dashboard => {
+                let areas = dashboard::render(self, frame, body);
+                self.list_area.set(areas.list);
+            }
             View::Editor(state) => self.draw_editor(state, frame, body),
             View::Logs(state) => logs::render(state, frame, body),
             View::Help => self.draw_help(frame, body),
@@ -437,26 +549,30 @@ impl App {
     }
 
     fn draw_footer(&self, frame: &mut Frame, area: Rect) {
-        let hints = match &self.view {
-            View::Dashboard => {
-                "n new  e edit  space pause  d delete  r run  t test  l logs  L linger  R resync  ? help  q quit"
+        let hints = if self.filter_editing {
+            "filter: type…  Enter accept  Esc clear  ↑↓ move"
+        } else {
+            match &self.view {
+                View::Dashboard => {
+                    "/ filter  n new  e edit  space pause  d delete  r run  t test  l logs  L linger  R resync  ? help  q quit"
+                }
+                View::Editor(_) => {
+                    "Tab next section  space toggle  ←→ adjust  type numbers for time  Esc cancel"
+                }
+                View::Logs(_) => "Enter open  h back  r refresh  Esc back",
+                View::Help => "any key closes",
+                View::Confirm { .. } => "y confirm delete  other key cancels",
             }
-            View::Editor(_) => {
-                "Tab next section  space toggle  ←→ adjust  Esc cancel  Enter on <Save>"
-            }
-            View::Logs(_) => "Enter open  h back  r refresh  Esc back",
-            View::Help => "any key closes",
-            View::Confirm { .. } => "y confirm delete  other key cancels",
+        };
+        let prefix = if self.filter_editing {
+            format!(" /{}", self.filter.value)
+        } else if self.message.is_empty() {
+            String::new()
+        } else {
+            format!(" {} ", self.message)
         };
         let footer = Line::from(vec![
-            Span::styled(
-                if self.message.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {} ", self.message)
-                },
-                Style::new().fg(Color::Yellow),
-            ),
+            Span::styled(prefix, Style::new().fg(Color::Yellow)),
             Span::styled(format!(" {hints}"), Style::new().fg(Color::DarkGray)),
         ]);
         frame.render_widget(Paragraph::new(footer), area);
@@ -592,7 +708,7 @@ impl App {
             SchedulePreset::Hourly => {}
             SchedulePreset::EveryNHours { hours } => lines.push(format!("every: {hours} hours")),
             SchedulePreset::Daily { hour, minute } => {
-                lines.push(format!("at: {hour:02}:{minute:02}"));
+                lines.push(format!("at: {hour:02}:{minute:02}{}", state.typed_hint()));
             }
             SchedulePreset::Weekly {
                 weekday,
@@ -600,7 +716,7 @@ impl App {
                 minute,
             } => {
                 lines.push(format!("on: {}", weekday.as_systemd()));
-                lines.push(format!("at: {hour:02}:{minute:02}"));
+                lines.push(format!("at: {hour:02}:{minute:02}{}", state.typed_hint()));
             }
             SchedulePreset::Spread { period } => lines.push(format!(
                 "window: {}",

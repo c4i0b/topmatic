@@ -17,6 +17,7 @@ pub trait SystemdCtl {
     fn stop_all(&self) -> io::Result<()>;
     fn instances(&self) -> Vec<String>;
     fn next_run(&self, profile: &str) -> Option<DateTime<Utc>>;
+    fn timer_active(&self, profile: &str) -> bool;
     fn linger_enabled(&self) -> Option<bool>;
     fn enable_linger(&self) -> io::Result<()>;
 }
@@ -103,6 +104,13 @@ impl SystemdCtl for RealSystemdCtl {
             return None;
         }
         parse_systemd_timestamp(String::from_utf8_lossy(&output.stdout).trim())
+    }
+
+    fn timer_active(&self, profile: &str) -> bool {
+        self.systemctl(&["is-active", &units::timer_instance(profile)])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
     }
 
     fn linger_enabled(&self) -> Option<bool> {

@@ -151,7 +151,11 @@ mod tests {
             parse_instance("topmatic@flatpak-daily.timer.d"),
             Some("flatpak-daily")
         );
-        assert_eq!(parse_instance("topmatic@.timer"), None, "template is not an instance");
+        assert_eq!(
+            parse_instance("topmatic@.timer"),
+            None,
+            "template is not an instance"
+        );
         assert_eq!(parse_instance("other@x.timer"), None);
     }
 }

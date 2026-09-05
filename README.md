@@ -1,0 +1,97 @@
+# topmatic
+
+User-level scheduled updates for Linux, powered by [topgrade](https://github.com/topgrade-rs/topgrade) as the backend. A ratatui TUI (plus CLI) that programs update jobs — like daily Flatpak updates with auto-clean — without sudo and without touching your own topgrade configuration.
+
+Works on any distro that has topgrade installed and a systemd user session.
+
+## How it works
+
+- **topgrade stays the backend**: topmatic composes `topgrade --config <topmatic-owned> --only <steps> --cleanup --no-ask-retry --yes`. Your `~/.config/topgrade.toml` is never read — the isolated config lives at `~/.config/topmatic/topgrade.toml`.
+- **Declarative config**: `~/.config/topmatic/config.toml` is the source of truth. The TUI, `topmatic edit` (opens `$EDITOR`) and hand edits are all first-class: every TUI open or save runs a sync that converges systemd to the config and removes orphan timers.
+- **systemd user timers**: template units `topmatic@.service` / `topmatic@.timer` in `~/.config/systemd/user/` plus a per-profile drop-in (`topmatic@<profile>.timer.d/10-schedule.conf`) with `OnCalendar` and `RandomizedDelaySec`. No root anywhere.
+- **Runner**: headless `topmatic run <profile>` takes an flock (no overlapping runs), tees output to timestamped logs under `~/.local/state/topmatic/logs/`, writes a `last-run` JSON status and notifies via `notify-send` according to the profile policy (default: only on failure).
+
+## Requirements
+
+- Linux with systemd (user session)
+- [topgrade](https://github.com/topgrade-rs/topgrade) in PATH
+- optional: `notify-send` for desktop notifications
+- recommended: `loginctl enable-linger` so timers fire without an open session (topmatic shows the state and can enable it with `L`)
+
+## Install
+
+```sh
+cargo install --path .
+```
+
+## Usage
+
+Run `topmatic` for the TUI:
+
+| Key | Action |
+|-----|--------|
+| `n` / `e` | new / edit profile |
+| `space` | pause / resume |
+| `d` | delete (warns: run history is purged too) |
+| `r` | run now via systemd |
+| `t` | dry-run test |
+| `l` | browse run logs |
+| `L` | enable lingering |
+| `R` | resync units to config |
+| `?` | help |
+
+Profile editor: steps picker with incremental search (curated user-level categories first, full `topgrade --only` catalog parsed from your installed topgrade), schedule presets — hourly, every N hours, daily (default 12:00), weekly, custom `OnCalendar` validated with `systemd-analyze calendar` — plus cleanup toggle (default on) and notification policy.
+
+CLI:
+
+```sh
+topmatic list                 # profiles, next run, last status
+topmatic sync                 # converge systemd units to config
+topmatic edit                 # $EDITOR on config, then sync
+topmatic run <profile>        # headless run (what systemd units call)
+topmatic run <profile> --dry-run
+```
+
+## File layout
+
+```
+~/.config/topmatic/config.toml                      # profiles (source of truth)
+~/.config/topmatic/topgrade.toml                    # topmatic-owned topgrade config
+~/.config/systemd/user/topmatic@.service|timer      # generated templates
+~/.config/systemd/user/topmatic@<p>.timer.d/        # per-profile schedule
+~/.local/state/topmatic/logs/<profile>/             # run logs
+~/.local/state/topmatic/status/<profile>.json       # last-run status
+```
+
+## Known behavior
+
+- The topgrade `flatpak` step updates both user and system installations; system-wide updates rely on polkit and may fail (or need a GUI auth agent) when unattended. Failures surface in the log, status and notification.
+- `system` scope jobs (privileged updates) are modeled (`Scope::System`) but intentionally not implemented yet; the sync reports them as unsupported.
+
+## Development
+
+```sh
+make check    # cargo fmt --check + clippy -D warnings + test
+```
+
+- Devcontainer included (`.devcontainer/`, Rust + beads).
+- Task tracking with [beads](https://github.com/gastownhall/beads): `bd ready`, `bd prime`.
+- Tests follow the pyramid: fast unit tests for domain logic (schedules, argv, catalog parsing), integration tests with stub `topgrade`/`notify-send` binaries, and a small set of headless end-to-end checks. The TUI itself is covered by a manual checklist:
+
+  - [ ] open TUI with no config → empty dashboard, templates installed, linger hint
+  - [ ] `n` → create profile with steps + schedule → timer appears in `systemctl --user list-timers`
+  - [ ] `t` dry-run → status message ok; `l` shows the log
+  - [ ] `space` pause → timer disabled; resume → re-enabled
+  - [ ] `d` delete → timer gone, logs purged
+  - [ ] edit `~/.config/topmatic/config.toml` by hand → reopen TUI → changes reconciled
+
+## Roadmap
+
+- v0.2: interactive PTY run inside the TUI, log retention
+- v0.3: cron fallback for non-systemd distros, `topmatic doctor`
+- v0.4: packaging (crates.io, AUR, release binaries), pt-BR i18n
+- later: `Scope::System` jobs (system-level updates via systemd system units)
+
+## License
+
+MIT

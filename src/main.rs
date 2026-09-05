@@ -14,17 +14,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run a profile headlessly (used by systemd units)
+    #[command(about = "Run a profile headlessly (used by systemd units)")]
     Run {
         profile: String,
         #[arg(long)]
         dry_run: bool,
     },
-    /// Converge systemd units to the config
+    #[command(about = "Converge systemd units to the config")]
     Sync,
-    /// List profiles with timer status
+    #[command(about = "List profiles with timer status")]
     List,
-    /// Edit the config with $EDITOR, then sync
+    #[command(about = "Edit the config with $EDITOR, then sync")]
     Edit,
 }
 

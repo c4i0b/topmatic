@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::domain::profile::{NotifyPolicy, Profile, Scope, sanitize_name};
-use crate::domain::schedule::{Schedule, SchedulePreset, Weekday};
+use crate::domain::schedule::{Schedule, SchedulePreset, SpreadPeriod, Weekday};
 use crate::domain::steps::StepEntry;
 use crate::systemd::validate_on_calendar;
 
@@ -32,14 +32,16 @@ enum PresetKind {
     EveryNHours,
     Daily,
     Weekly,
+    Spread,
     Custom,
 }
 
-const PRESET_ORDER: [PresetKind; 5] = [
+const PRESET_ORDER: [PresetKind; 6] = [
     PresetKind::Hourly,
     PresetKind::EveryNHours,
     PresetKind::Daily,
     PresetKind::Weekly,
+    PresetKind::Spread,
     PresetKind::Custom,
 ];
 
@@ -50,6 +52,7 @@ impl SchedulePreset {
             SchedulePreset::EveryNHours { .. } => PresetKind::EveryNHours,
             SchedulePreset::Daily { .. } => PresetKind::Daily,
             SchedulePreset::Weekly { .. } => PresetKind::Weekly,
+            SchedulePreset::Spread { .. } => PresetKind::Spread,
             SchedulePreset::Custom { .. } => PresetKind::Custom,
         }
     }
@@ -273,6 +276,7 @@ impl EditorState {
             PresetKind::EveryNHours => 1,
             PresetKind::Daily => 2,
             PresetKind::Weekly => 3,
+            PresetKind::Spread => 1,
             PresetKind::Custom => 1,
         }
     }
@@ -301,10 +305,16 @@ impl EditorState {
             ScheduleField::Hour => set_hour(&mut self.schedule.preset, delta),
             ScheduleField::Minute => set_minute(&mut self.schedule.preset, delta),
             ScheduleField::Weekday => cycle_weekday(&mut self.schedule.preset, delta),
+            ScheduleField::SpreadPeriod => cycle_spread_period(&mut self.schedule.preset, delta),
             ScheduleField::Custom => {}
             ScheduleField::Delay => {
+                let step = if self.schedule.randomized_delay_sec >= 3600 {
+                    3600
+                } else {
+                    60
+                };
                 self.schedule.randomized_delay_sec =
-                    (self.schedule.randomized_delay_sec as i64 + delta * 60).max(0) as u64;
+                    (self.schedule.randomized_delay_sec as i64 + delta * step as i64).max(0) as u64;
             }
         }
     }
@@ -340,6 +350,13 @@ impl EditorState {
                 2 => ScheduleField::Minute,
                 _ => ScheduleField::Delay,
             },
+            PresetKind::Spread => {
+                if row == 0 {
+                    ScheduleField::SpreadPeriod
+                } else {
+                    ScheduleField::Delay
+                }
+            }
             PresetKind::Custom => {
                 if row == 0 {
                     ScheduleField::Custom
@@ -370,6 +387,9 @@ impl EditorState {
                 weekday: preset.weekday(),
                 hour: preset.hour(),
                 minute: preset.minute(),
+            },
+            PresetKind::Spread => SchedulePreset::Spread {
+                period: SpreadPeriod::Daily,
             },
             PresetKind::Custom => SchedulePreset::Custom {
                 calendar: self.custom.value.clone(),
@@ -427,6 +447,7 @@ enum ScheduleField {
     Hour,
     Minute,
     Weekday,
+    SpreadPeriod,
     Custom,
     Delay,
 }
@@ -470,6 +491,16 @@ fn cycle_weekday(preset: &mut SchedulePreset, delta: i64) {
             .position(|day| *day == *weekday)
             .unwrap_or(0) as i64;
         *weekday = Weekday::ALL[((index + delta).rem_euclid(7)) as usize];
+    }
+}
+
+fn cycle_spread_period(preset: &mut SchedulePreset, delta: i64) {
+    if let SchedulePreset::Spread { period } = preset {
+        *period = match (*period, delta < 0) {
+            (SpreadPeriod::Daily, false) => SpreadPeriod::Weekly,
+            (SpreadPeriod::Weekly, true) => SpreadPeriod::Daily,
+            (current, _) => current,
+        };
     }
 }
 
@@ -530,7 +561,7 @@ mod tests {
         assert!(profile.cleanup);
         assert_eq!(profile.notify, NotifyPolicy::OnFailure);
         assert!(profile.enabled);
-        assert_eq!(profile.schedule.preset.on_calendar(), "*-*-* 12:00:00");
+        assert_eq!(profile.schedule.preset.on_calendar(), "daily");
     }
 
     #[test]
@@ -570,6 +601,41 @@ mod tests {
             }
             other => panic!("unexpected preset {other:?}"),
         }
+    }
+
+    #[test]
+    fn spread_period_toggles_between_daily_and_weekly() {
+        let mut editor = new_editor();
+        editor.schedule.preset = SchedulePreset::Spread {
+            period: SpreadPeriod::Daily,
+        };
+        cycle_spread_period(&mut editor.schedule.preset, 1);
+        assert_eq!(
+            editor.schedule.preset,
+            SchedulePreset::Spread {
+                period: SpreadPeriod::Weekly
+            }
+        );
+        cycle_spread_period(&mut editor.schedule.preset, -1);
+        assert_eq!(
+            editor.schedule.preset,
+            SchedulePreset::Spread {
+                period: SpreadPeriod::Daily
+            }
+        );
+    }
+
+    #[test]
+    fn delay_adjusts_in_hour_steps_when_large() {
+        let mut editor = new_editor();
+        editor.schedule.randomized_delay_sec = 43_200;
+        editor.section = Section::Schedule;
+        editor.schedule_index = editor.schedule_rows() - 1;
+        editor.adjust_schedule(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(editor.schedule.randomized_delay_sec, 39_600);
+        editor.schedule.randomized_delay_sec = 900;
+        editor.adjust_schedule(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(editor.schedule.randomized_delay_sec, 960);
     }
 
     #[test]

@@ -366,7 +366,11 @@ impl App {
             Some(true) => self.message = "lingering already enabled".to_string(),
             _ => match self.ctl.enable_linger() {
                 Ok(()) => self.message = "lingering enabled".to_string(),
-                Err(error) => self.message = format!("enable-linger failed: {error}"),
+                Err(_) => {
+                    self.message =
+                        "could not enable lingering (no sudo involved); run: loginctl enable-linger"
+                            .to_string()
+                }
             },
         }
     }
@@ -564,8 +568,9 @@ impl App {
         let mut lines = vec![match &state.schedule.preset {
             SchedulePreset::Hourly => "preset: hourly".to_string(),
             SchedulePreset::EveryNHours { hours } => format!("preset: every N hours ({hours}h)"),
-            SchedulePreset::Daily { .. } => "preset: daily".to_string(),
-            SchedulePreset::Weekly { .. } => "preset: weekly".to_string(),
+            SchedulePreset::Daily { .. } => "preset: daily at fixed time".to_string(),
+            SchedulePreset::Weekly { .. } => "preset: weekly at fixed time".to_string(),
+            SchedulePreset::Spread { .. } => "preset: spread over the period".to_string(),
             SchedulePreset::Custom { .. } => "preset: custom OnCalendar".to_string(),
         }];
         match &state.schedule.preset {
@@ -582,13 +587,20 @@ impl App {
                 lines.push(format!("on: {}", weekday.as_systemd()));
                 lines.push(format!("at: {hour:02}:{minute:02}"));
             }
+            SchedulePreset::Spread { period } => lines.push(format!(
+                "window: {}",
+                match period {
+                    crate::domain::schedule::SpreadPeriod::Daily => "daily",
+                    crate::domain::schedule::SpreadPeriod::Weekly => "weekly",
+                }
+            )),
             SchedulePreset::Custom { .. } => {
                 lines.push(format!("expr: {}", state.custom.value));
             }
         }
         lines.push(format!(
-            "random delay: {}min",
-            state.schedule.randomized_delay_sec / 60
+            "max random delay: {}",
+            crate::domain::schedule::format_delay(state.schedule.randomized_delay_sec)
         ));
         lines
     }

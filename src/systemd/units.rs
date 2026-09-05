@@ -45,7 +45,9 @@ pub fn service_unit(topmatic_bin: &Path, scope: Scope) -> String {
          Type=oneshot\n\
          ExecStart={} run %i\n\
          Environment=PATH={path_env}\n\
-         Nice=10\n",
+         Nice=19\n\
+         CPUSchedulingPolicy=batch\n\
+         IOSchedulingClass=idle\n",
         topmatic_bin.display()
     )
 }
@@ -117,6 +119,14 @@ mod tests {
         assert!(unit.contains("ExecStart=/home/caio/.cargo/bin/topmatic run %i"));
         assert!(unit.contains("Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin"));
         assert!(unit.contains("Type=oneshot"));
+    }
+
+    #[test]
+    fn service_unit_runs_at_minimum_priority() {
+        let unit = service_unit(Path::new("/bin/topmatic"), Scope::User);
+        assert!(unit.contains("Nice=19"));
+        assert!(unit.contains("CPUSchedulingPolicy=batch"));
+        assert!(unit.contains("IOSchedulingClass=idle"));
     }
 
     #[test]

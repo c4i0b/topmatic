@@ -32,6 +32,7 @@ mod tests {
 
     fn profile(steps: &[&str], cleanup: bool) -> Profile {
         Profile {
+            repos: Vec::new(),
             name: "flatpak-daily".to_string(),
             steps: steps.iter().map(|s| s.to_string()).collect(),
             schedule: Schedule::default(),

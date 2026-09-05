@@ -29,7 +29,7 @@ use input::LineEdit;
 
 pub enum View {
     Dashboard,
-    Editor(editor::EditorState),
+    Editor(Box<editor::EditorState>),
     Logs(logs::LogsState),
     Help,
     Confirm { profile: String },
@@ -237,7 +237,7 @@ impl App {
                 editor::EditorEvent::Cancel => {
                     self.message.clear();
                 }
-                editor::EditorEvent::RequestSave => self.save_profile(state),
+                editor::EditorEvent::RequestSave => self.save_profile(*state),
                 editor::EditorEvent::None => self.view = View::Editor(state),
             },
             View::Logs(mut state) => {
@@ -277,7 +277,10 @@ impl App {
             }
             KeyCode::Char('?') => self.view = View::Help,
             KeyCode::Char('n') => {
-                self.view = View::Editor(editor::EditorState::new(None, self.catalog.clone()));
+                self.view = View::Editor(Box::new(editor::EditorState::new(
+                    None,
+                    self.catalog.clone(),
+                )));
             }
             KeyCode::Char('e') | KeyCode::Enter => self.open_editor_for_selected(),
             KeyCode::Char(' ') => self.toggle_enabled(),
@@ -347,10 +350,10 @@ impl App {
             .selected_row()
             .and_then(|row| self.config.profile(&row.name).cloned());
         if let Some(profile) = profile {
-            self.view = View::Editor(editor::EditorState::new(
+            self.view = View::Editor(Box::new(editor::EditorState::new(
                 Some(&profile),
                 self.catalog.clone(),
-            ));
+            )));
         }
     }
 
@@ -359,24 +362,37 @@ impl App {
             Ok(profile) => profile,
             Err(error) => {
                 self.message = error;
-                self.view = View::Editor(state);
+                self.view = View::Editor(Box::new(state));
                 return;
             }
         };
         if let Err(error) = editor::validate_draft(&profile) {
             self.message = error;
-            self.view = View::Editor(state);
+            self.view = View::Editor(Box::new(state));
             return;
         }
         if state.creating && self.config.profile(&profile.name).is_some() {
             self.message = format!("profile {} already exists", profile.name);
-            self.view = View::Editor(state);
+            self.view = View::Editor(Box::new(state));
+            return;
+        }
+        let mut profile = profile;
+        if !profile.repos.is_empty()
+            && let Some(topgrade) = self.topgrade_bin.clone()
+            && let Err(error) = runner::verify(&profile, &topgrade, &self.paths, &NullNotify)
+        {
+            profile.enabled = false;
+            self.message = format!("saved paused — {error}");
+            self.config.upsert(profile);
+            let _ = config::save(&self.paths, &self.config);
+            let _ = systemd_sync::sync(&self.config, &self.topmatic_bin, &self.ctl);
+            self.rebuild_rows();
             return;
         }
         self.config.upsert(profile.clone());
         if let Err(error) = config::save(&self.paths, &self.config) {
             self.message = format!("save failed: {error}");
-            self.view = View::Editor(state);
+            self.view = View::Editor(Box::new(state));
             return;
         }
         let report = systemd_sync::sync(&self.config, &self.topmatic_bin, &self.ctl);
@@ -605,7 +621,7 @@ impl App {
             )),
             Span::styled(state.filter.value.clone(), Style::new().fg(Color::Cyan)),
         ])];
-        for (index, entry) in state.filtered_steps().iter().take(12).enumerate() {
+        for (index, entry) in state.filtered_steps().iter().take(10).enumerate() {
             let marker = if state.selected_steps.contains(&entry.id) {
                 "[x]"
             } else {
@@ -635,6 +651,39 @@ impl App {
                 ),
             ]);
             steps_lines.push(line);
+        }
+
+        let focus_repos = state.section == editor::Section::Repos;
+        steps_lines.push(Line::from(vec![
+            focus_marker(focus_repos),
+            Span::raw(format!(" repos ({}): path: ", state.repos.len())),
+            Span::styled(state.repo_path.value.clone(), Style::new().fg(Color::Cyan)),
+        ]));
+        steps_lines.push(Line::from(vec![
+            Span::raw("  apply (optional): "),
+            Span::styled(state.repo_apply.value.clone(), Style::new().fg(Color::Cyan)),
+        ]));
+        steps_lines.push(Line::from(vec![
+            Span::raw("  scan dir + Enter: "),
+            Span::styled(state.repo_scan.value.clone(), Style::new().fg(Color::Cyan)),
+        ]));
+        for (index, repo) in state.repos.iter().take(6).enumerate() {
+            let row = 3 + index;
+            steps_lines.push(Line::from(vec![
+                Span::raw(if focus_repos && state.repo_index == row {
+                    "▶ "
+                } else {
+                    "  "
+                }),
+                Span::raw(repo.path.clone()),
+                Span::styled(
+                    repo.apply
+                        .as_ref()
+                        .map(|apply| format!("  -> {apply}"))
+                        .unwrap_or_default(),
+                    Style::new().fg(Color::Yellow),
+                ),
+            ]));
         }
 
         let left_block = Paragraph::new(

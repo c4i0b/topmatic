@@ -31,6 +31,15 @@ impl Paths {
         self.config_dir.join("topgrade.toml")
     }
 
+    pub fn topgrade_config_file_for(&self, profile: &crate::domain::profile::Profile) -> PathBuf {
+        if profile.repos.is_empty() {
+            self.topgrade_config_file()
+        } else {
+            self.config_dir
+                .join(format!("topgrade-{}.toml", profile.name))
+        }
+    }
+
     pub fn logs_dir(&self, profile: &str) -> PathBuf {
         self.state_dir.join("logs").join(profile)
     }

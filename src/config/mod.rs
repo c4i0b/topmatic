@@ -24,6 +24,15 @@ pub fn validate_profile(profile: &Profile) -> Vec<String> {
     if profile.steps.is_empty() {
         errors.push("no steps selected".to_string());
     }
+    let home = std::env::var("HOME").unwrap_or_default();
+    for repo in &profile.repos {
+        if !crate::domain::repos::is_git_repo(&repo.path, &home) {
+            errors.push(format!(
+                "repo {} is not an existing git repository",
+                repo.path
+            ));
+        }
+    }
     match &profile.schedule.preset {
         SchedulePreset::EveryNHours { hours } if !(1..=23).contains(hours) => {
             errors.push(format!("every-n-hours out of range (1..=23): {hours}"));
@@ -111,6 +120,7 @@ mod tests {
 
     fn sample_profile(name: &str) -> Profile {
         Profile {
+            repos: Vec::new(),
             name: name.to_string(),
             steps: vec!["flatpak".to_string()],
             schedule: Schedule::default(),
@@ -166,6 +176,7 @@ mod tests {
 
     fn profile_named(name: &str) -> Profile {
         Profile {
+            repos: Vec::new(),
             name: name.to_string(),
             ..sample_profile("x")
         }

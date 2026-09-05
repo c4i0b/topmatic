@@ -18,7 +18,7 @@ Flatpaks, cargo installs, npm globals, pipx apps… [topgrade](https://github.co
 ## Requirements
 
 - Linux with systemd (user session)
-- [topgrade](https://github.com/topgrade-rs/topgrade) in `PATH`
+- [topgrade](https://github.com/topgrade-rs/topgrade) in `PATH` (`cargo install topgrade`, or your distro package manager)
 - Rust toolchain (to install from source)
 
 ## Install

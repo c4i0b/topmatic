@@ -149,7 +149,8 @@ impl App {
             );
         }
         if app.topgrade_bin.is_none() {
-            app.message = "warning: topgrade not found in PATH".to_string();
+            app.message =
+                "warning: topgrade not found in PATH (cargo install topgrade)".to_string();
         }
         app.rebuild_rows();
         Ok(app)

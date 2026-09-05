@@ -68,6 +68,8 @@ fn cmd_doctor() -> anyhow::Result<()> {
         None => {
             failures += 1;
             println!("FAIL: topgrade not found in PATH");
+            println!("      install it with: cargo install topgrade");
+            println!("      or via your distro package manager / AUR / brew");
         }
     }
 

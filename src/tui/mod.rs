@@ -619,7 +619,7 @@ impl App {
                 .areas(area);
 
         let inner_height = left.height.saturating_sub(2) as usize;
-        let repos_block = 4 + state.repos.len().min(editor::REPOS_VISIBLE);
+        let repos_block = 5 + state.repos.len().min(editor::REPOS_VISIBLE);
         let steps_height = inner_height
             .saturating_sub(2 + repos_block + usize::from(state.steps_filtering))
             .max(1);
@@ -661,6 +661,10 @@ impl App {
                 filter_label
             )),
         ])];
+        steps_lines.push(Line::from(vec![
+            Span::styled("  green ", Style::new().fg(Color::Green)),
+            Span::raw("= user-level family (sorted first)  white = everything else"),
+        ]));
         if state.steps_filtering {
             steps_lines.push(Line::from(Span::styled(
                 format!("  {}▏", state.filter.value),

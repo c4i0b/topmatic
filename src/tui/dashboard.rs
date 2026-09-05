@@ -58,7 +58,11 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 Cell::from(row.schedule.clone()),
                 Cell::from(
                     row.next_run
-                        .map(|next| next.format("%a %d %b %H:%M").to_string())
+                        .map(|next| {
+                            next.with_timezone(&chrono::Local)
+                                .format("%a %d %b %H:%M")
+                                .to_string()
+                        })
                         .unwrap_or_else(|| "-".to_string()),
                 ),
                 Cell::from(Line::from(status_span(&row.status))),

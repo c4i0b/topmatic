@@ -135,10 +135,51 @@ fn run_status(mut command: Command) -> io::Result<()> {
 }
 
 pub fn parse_systemd_timestamp(value: &str) -> Option<DateTime<Utc>> {
-    let value = value.trim().trim_end_matches(" UTC");
-    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
-        .ok()
-        .map(|naive| naive.and_utc())
+    let value = strip_weekday_prefix(value.trim());
+    let (datetime, timezone) = value.rsplit_once(' ')?;
+    let naive = NaiveDateTime::parse_from_str(datetime, "%Y-%m-%d %H:%M:%S").ok()?;
+    match timezone {
+        "UTC" | "GMT" => Some(naive.and_utc()),
+        offset if parse_offset_minutes(offset).is_some() => {
+            let offset = parse_offset_minutes(offset).unwrap();
+            Some((naive - chrono::Duration::minutes(offset)).and_utc())
+        }
+        _ => {
+            use chrono::TimeZone;
+            chrono::Local
+                .from_local_datetime(&naive)
+                .single()
+                .map(|local| local.with_timezone(&Utc))
+        }
+    }
+}
+
+fn strip_weekday_prefix(value: &str) -> &str {
+    const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    for weekday in WEEKDAYS {
+        if let Some(rest) = value.strip_prefix(weekday) {
+            return rest.trim_start();
+        }
+    }
+    value
+}
+
+fn parse_offset_minutes(timezone: &str) -> Option<i64> {
+    let (sign, digits) = timezone.split_at(1);
+    let sign = match sign {
+        "+" => 1,
+        "-" => -1,
+        _ => return None,
+    };
+    let (hours, minutes) = match digits.len() {
+        2 => (digits.parse::<i64>().ok()?, 0),
+        4 => (
+            digits[..2].parse::<i64>().ok()?,
+            digits[2..].parse::<i64>().ok()?,
+        ),
+        _ => return None,
+    };
+    Some(sign * (hours * 60 + minutes))
 }
 
 pub fn validate_on_calendar(calendar: &str) -> Result<(), String> {
@@ -173,6 +214,26 @@ mod tests {
                     .unwrap()
                     .and_utc()
             )
+        );
+        assert_eq!(
+            parse_systemd_timestamp("Sun 2026-09-06 11:56:39 -03"),
+            Some(
+                NaiveDateTime::parse_from_str("2026-09-06 14:56:39", "%Y-%m-%d %H:%M:%S")
+                    .unwrap()
+                    .and_utc()
+            )
+        );
+        assert_eq!(
+            parse_systemd_timestamp("2026-09-06 06:26:39 +0530"),
+            Some(
+                NaiveDateTime::parse_from_str("2026-09-06 00:56:39", "%Y-%m-%d %H:%M:%S")
+                    .unwrap()
+                    .and_utc()
+            )
+        );
+        assert!(
+            parse_systemd_timestamp("Wed 2026-01-14 09:00:00 CET").is_some(),
+            "abbreviation timezones fall back to local interpretation"
         );
         assert_eq!(parse_systemd_timestamp("n/a"), None);
         assert_eq!(parse_systemd_timestamp(""), None);

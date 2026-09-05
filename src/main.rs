@@ -58,7 +58,11 @@ fn cmd_list() -> anyhow::Result<()> {
     for profile in &config.profiles {
         let next = ctl
             .next_run(&profile.name)
-            .map(|next| next.format("%a %d %b %H:%M").to_string())
+            .map(|next| {
+                next.with_timezone(&chrono::Local)
+                    .format("%a %d %b %H:%M")
+                    .to_string()
+            })
             .unwrap_or_else(|| "-".to_string());
         let last = topmatic::runner::read_status(&paths, &profile.name)
             .ok()

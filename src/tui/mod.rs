@@ -20,7 +20,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::config::{self, AppConfig};
 use crate::domain::profile::NotifyPolicy;
-use crate::domain::steps::{CURATED, StepEntry};
+use crate::domain::steps::{FALLBACK_STEPS, StepEntry, curated_category};
 use crate::paths::Paths;
 use crate::runner::{self, RunOutcome, notify::NullNotify, read_status};
 use crate::systemd::{RealSystemdCtl, SystemdCtl, sync as systemd_sync};
@@ -164,13 +164,11 @@ impl App {
             let text = String::from_utf8_lossy(&output.stdout);
             return crate::domain::steps::catalog(&text);
         }
-        CURATED
+        FALLBACK_STEPS
             .iter()
-            .flat_map(|(category, ids)| {
-                ids.iter().map(|id| StepEntry {
-                    id: id.to_string(),
-                    category: Some(category),
-                })
+            .map(|id| StepEntry {
+                id: id.to_string(),
+                category: curated_category(id),
             })
             .collect()
     }

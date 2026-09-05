@@ -13,77 +13,163 @@ pub const PRIVILEGED_STEPS: &[&str] = &[
     "restarts",
 ];
 
-pub const CURATED: &[(&str, &[&str])] = &[
-    ("Flatpak", &["flatpak"]),
-    (
-        "Runtimes & languages",
-        &[
-            "cargo",
-            "rustup",
-            "node",
-            "pnpm",
-            "yarn",
-            "bun",
-            "bun_packages",
-            "deno",
-            "go",
-            "gem",
-            "julia",
-            "juliaup",
-            "pyenv",
-            "uv",
-            "pipx",
-            "pipxu",
-            "pip3",
-            "poetry",
-            "stack",
-            "opam",
-            "sdkman",
-            "mise",
-            "asdf",
-            "ghcup",
-            "elan",
-            "zigup",
-            "zvm",
-            "bob",
-            "aqua",
-        ],
-    ),
-    (
-        "Editors & tools",
-        &[
-            "vim",
-            "emacs",
-            "helix",
-            "helix_db",
-            "micro",
-            "kakoune",
-            "vscode",
-            "vscodium",
-            "vscode_insiders",
-            "vscodium_insiders",
-            "tmux",
-            "atuin",
-            "github_cli_extensions",
-            "tldr",
-            "opencode",
-            "claude_code",
-            "jetbrains_toolbox",
-        ],
-    ),
-    (
-        "Dotfiles & repos",
-        &[
-            "chezmoi",
-            "yadm",
-            "rcm",
-            "git_repos",
-            "fossil",
-            "myrepos",
-            "custom_commands",
-        ],
-    ),
+pub const CATEGORY_FLATPAK: &str = "Flatpak";
+pub const CATEGORY_RUNTIMES: &str = "Runtimes & languages";
+pub const CATEGORY_TOOLS: &str = "Editors & tools";
+pub const CATEGORY_REPOS: &str = "Dotfiles & repos";
+
+const RUNTIME_EXACT: &[&str] = &[
+    "cargo",
+    "rustup",
+    "node",
+    "pnpm",
+    "yarn",
+    "deno",
+    "go",
+    "gem",
+    "ruby_gems",
+    "pyenv",
+    "uv",
+    "pipx",
+    "pipxu",
+    "poetry",
+    "conda",
+    "mamba",
+    "pixi",
+    "julia",
+    "juliaup",
+    "stack",
+    "opam",
+    "elan",
+    "sdkman",
+    "mise",
+    "asdf",
+    "zigup",
+    "zvm",
+    "vcpkg",
+    "tlmgr",
+    "raco",
+    "haxelib",
+    "volta_packages",
 ];
+
+const RUNTIME_STEMS: &[&str] = &["pip", "julia", "bun", "rust", "ruby", "zig"];
+
+const TOOLS_EXACT: &[&str] = &[
+    "vim",
+    "emacs",
+    "micro",
+    "kakoune",
+    "atom",
+    "tmux",
+    "atuin",
+    "tldr",
+    "ghcup",
+    "aqua",
+    "bob",
+    "gcloud",
+    "ollama",
+    "opencode",
+    "claude_code",
+    "codex",
+    "spicetify",
+    "getnf",
+    "bin",
+    "shell",
+    "helm",
+    "krew",
+    "github_cli_extensions",
+    "claude_code_plugins",
+];
+
+const TOOLS_STEMS: &[&str] = &[
+    "vscode",
+    "vscodium",
+    "jetbrains",
+    "helix",
+    "cursor",
+    "windsurf",
+];
+
+const REPOS_EXACT: &[&str] = &[
+    "chezmoi",
+    "yadm",
+    "rcm",
+    "fossil",
+    "stew",
+    "custom_commands",
+    "git_repos",
+    "myrepos",
+];
+
+const REPOS_STEMS: &[&str] = &["repo"];
+
+pub const FALLBACK_STEPS: &[&str] = &[
+    "flatpak",
+    "cargo",
+    "rustup",
+    "node",
+    "pnpm",
+    "yarn",
+    "bun",
+    "deno",
+    "go",
+    "uv",
+    "pipx",
+    "pyenv",
+    "poetry",
+    "mise",
+    "vim",
+    "emacs",
+    "helix",
+    "vscode",
+    "vscodium",
+    "tmux",
+    "atuin",
+    "tldr",
+    "opencode",
+    "jetbrains_toolbox",
+    "chezmoi",
+    "yadm",
+    "git_repos",
+    "custom_commands",
+];
+
+fn matches_token(step: &str, token: &str) -> bool {
+    if step == token {
+        return true;
+    }
+    let Some(rest) = step.strip_prefix(token) else {
+        return false;
+    };
+    rest.starts_with('_') || rest.chars().all(|c| c.is_ascii_digit())
+}
+
+fn matches_any(step: &str, exact: &[&str], stems: &[&str], stem_contains: bool) -> bool {
+    if exact.contains(&step) {
+        return true;
+    }
+    if stem_contains {
+        return stems.iter().any(|token| step.contains(token));
+    }
+    stems.iter().any(|token| matches_token(step, token))
+}
+
+pub fn curated_category(step: &str) -> Option<&'static str> {
+    if step == "flatpak" {
+        return Some(CATEGORY_FLATPAK);
+    }
+    if matches_any(step, REPOS_EXACT, REPOS_STEMS, true) {
+        return Some(CATEGORY_REPOS);
+    }
+    if matches_any(step, RUNTIME_EXACT, RUNTIME_STEMS, false) {
+        return Some(CATEGORY_RUNTIMES);
+    }
+    if matches_any(step, TOOLS_EXACT, TOOLS_STEMS, false) {
+        return Some(CATEGORY_TOOLS);
+    }
+    None
+}
 
 #[derive(Debug, Clone)]
 pub struct StepEntry {
@@ -132,13 +218,6 @@ pub fn catalog(help_text: &str) -> Vec<StepEntry> {
             id,
         })
         .collect()
-}
-
-pub fn curated_category(step: &str) -> Option<&'static str> {
-    CURATED
-        .iter()
-        .find(|(_, ids)| ids.contains(&step))
-        .map(|(category, _)| *category)
 }
 
 pub fn is_privileged(step: &str) -> bool {
@@ -196,6 +275,59 @@ mod tests {
         assert_eq!(cargo.category, Some("Runtimes & languages"));
         let unknown = entries.iter().find(|e| e.id == "winget").unwrap();
         assert_eq!(unknown.category, None);
+    }
+
+    #[test]
+    fn classification_is_pattern_based_for_future_steps() {
+        let cases = [
+            ("flatpak", Some("Flatpak")),
+            ("pipxu", Some("Runtimes & languages")),
+            ("pip3", Some("Runtimes & languages")),
+            ("pip_review_local", Some("Runtimes & languages")),
+            ("juliaup", Some("Runtimes & languages")),
+            ("ruby_gems", Some("Runtimes & languages")),
+            ("pip_something_new", Some("Runtimes & languages")),
+            ("rust_future", Some("Runtimes & languages")),
+            ("jetbrains_idea", Some("Editors & tools")),
+            ("jetbrains_next_ide", Some("Editors & tools")),
+            ("vscode_insiders", Some("Editors & tools")),
+            ("helix_db", Some("Editors & tools")),
+            ("cursor_agent", Some("Editors & tools")),
+            ("ghcup", Some("Editors & tools")),
+            ("gcloud", Some("Editors & tools")),
+            ("atuin", Some("Editors & tools")),
+            ("git_repos", Some("Dotfiles & repos")),
+            ("myrepos", Some("Dotfiles & repos")),
+            ("chezmoi", Some("Dotfiles & repos")),
+            ("something_repos_new", Some("Dotfiles & repos")),
+            ("winget", None),
+            ("gearlever", None),
+        ];
+        for (step, expected) in cases {
+            assert_eq!(curated_category(step), expected, "step {step}");
+        }
+    }
+
+    #[test]
+    fn every_current_user_level_step_falls_into_a_family_or_none() {
+        let entries = catalog(HELP);
+        let bucketed = entries.iter().filter(|e| e.category.is_some()).count();
+        assert!(bucketed > 80, "expected broad coverage, got {bucketed}");
+        let privileged = entries.iter().filter(|e| is_privileged(&e.id)).count();
+        assert!(privileged > 0);
+        for entry in entries.iter().filter(|e| is_privileged(&e.id)) {
+            assert_eq!(entry.category, None, "{} must not be curated", entry.id);
+        }
+    }
+
+    #[test]
+    fn fallback_steps_all_classify() {
+        for step in FALLBACK_STEPS {
+            assert!(
+                curated_category(step).is_some(),
+                "fallback step {step} lost its category"
+            );
+        }
     }
 
     #[test]

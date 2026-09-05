@@ -85,7 +85,11 @@ pub fn load(paths: &Paths) -> anyhow::Result<AppConfig> {
         return Ok(AppConfig::default());
     }
     let text = std::fs::read_to_string(&path)?;
-    Ok(toml::from_str(&text)?)
+    let mut config: AppConfig = toml::from_str(&text)?;
+    for profile in &mut config.profiles {
+        profile.schedule.preset = profile.schedule.preset.clone().normalized();
+    }
+    Ok(config)
 }
 
 pub fn save(paths: &Paths, config: &AppConfig) -> anyhow::Result<()> {
@@ -155,6 +159,25 @@ mod tests {
         assert_eq!(loaded, config);
         let text = std::fs::read_to_string(paths.config_file()).unwrap();
         assert!(text.starts_with("# topmatic configuration"));
+    }
+
+    #[test]
+    fn load_normalizes_legacy_spread_schedules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(
+            paths.config_file(),
+            "[[profiles]]\nname = \"old\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"spread\"\nperiod = \"daily\"\nrandomized_delay_sec = 600\n",
+        )
+        .unwrap();
+
+        let loaded = load(&paths).unwrap();
+        assert_eq!(
+            loaded.profiles[0].schedule.preset,
+            crate::domain::schedule::SchedulePreset::Daily { hour: 0, minute: 0 }
+        );
+        assert_eq!(loaded.profiles[0].schedule.randomized_delay_sec, 600);
     }
 
     #[test]

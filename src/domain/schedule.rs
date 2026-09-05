@@ -35,17 +35,9 @@ impl Weekday {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SpreadPeriod {
-    Daily,
-    Weekly,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "preset", rename_all = "kebab-case")]
 pub enum SchedulePreset {
-    Hourly,
     EveryNHours {
         hours: u32,
     },
@@ -58,35 +50,45 @@ pub enum SchedulePreset {
         hour: u32,
         minute: u32,
     },
-    Spread {
-        period: SpreadPeriod,
-    },
     Custom {
         calendar: String,
+    },
+    #[serde(rename = "spread")]
+    LegacySpread {
+        #[serde(default)]
+        period: Option<String>,
     },
 }
 
 impl SchedulePreset {
     pub fn on_calendar(&self) -> String {
         match self {
-            SchedulePreset::Hourly => "*-*-* *:00:00".to_string(),
             SchedulePreset::EveryNHours { hours } => format!("*-*-* 00/{hours:02}:00:00"),
-            SchedulePreset::Daily { hour, minute } => format!("*-*-* {hour:02}:{minute:02}:00"),
+            SchedulePreset::Daily { hour, minute } => {
+                format!("*-*-* {hour:02}:{minute:02}:00")
+            }
             SchedulePreset::Weekly {
                 weekday,
                 hour,
                 minute,
             } => format!("{} *-*-* {hour:02}:{minute:02}:00", weekday.as_systemd()),
-            SchedulePreset::Spread { period } => match period {
-                SpreadPeriod::Daily => "daily".to_string(),
-                SpreadPeriod::Weekly => "weekly".to_string(),
-            },
             SchedulePreset::Custom { calendar } => calendar.clone(),
+            SchedulePreset::LegacySpread { period } => match period.as_deref() {
+                Some("weekly") => "weekly".to_string(),
+                _ => "daily".to_string(),
+            },
+        }
+    }
+
+    pub fn normalized(self) -> Self {
+        match self {
+            SchedulePreset::LegacySpread { .. } => SchedulePreset::Daily { hour: 0, minute: 0 },
+            other => other,
         }
     }
 }
 
-pub const SPREAD_DELAY_SEC: u64 = 1_800;
+pub const DEFAULT_DELAY_SEC: u64 = 1_800;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Schedule {
@@ -103,10 +105,8 @@ fn default_randomized_delay_sec() -> u64 {
 impl Default for Schedule {
     fn default() -> Self {
         Self {
-            preset: SchedulePreset::Spread {
-                period: SpreadPeriod::Daily,
-            },
-            randomized_delay_sec: SPREAD_DELAY_SEC,
+            preset: SchedulePreset::Daily { hour: 0, minute: 0 },
+            randomized_delay_sec: DEFAULT_DELAY_SEC,
         }
     }
 }
@@ -114,7 +114,6 @@ impl Default for Schedule {
 impl Schedule {
     pub fn summary(&self) -> String {
         match &self.preset {
-            SchedulePreset::Hourly => "hourly".to_string(),
             SchedulePreset::EveryNHours { hours } => format!("every {hours}h"),
             SchedulePreset::Daily { hour, minute } => format!("daily {hour:02}:{minute:02}"),
             SchedulePreset::Weekly {
@@ -122,15 +121,8 @@ impl Schedule {
                 hour,
                 minute,
             } => format!("weekly {} {hour:02}:{minute:02}", weekday.as_systemd()),
-            SchedulePreset::Spread { period } => format!(
-                "{} spread (≤{})",
-                match period {
-                    SpreadPeriod::Daily => "daily",
-                    SpreadPeriod::Weekly => "weekly",
-                },
-                format_delay(self.randomized_delay_sec)
-            ),
             SchedulePreset::Custom { calendar } => format!("custom: {calendar}"),
+            SchedulePreset::LegacySpread { .. } => "daily".to_string(),
         }
     }
 }
@@ -140,10 +132,8 @@ pub fn quick_choices() -> Vec<(&'static str, Schedule)> {
         (
             "daily with random jitter",
             Schedule {
-                preset: SchedulePreset::Spread {
-                    period: SpreadPeriod::Daily,
-                },
-                randomized_delay_sec: SPREAD_DELAY_SEC,
+                preset: SchedulePreset::Daily { hour: 0, minute: 0 },
+                randomized_delay_sec: DEFAULT_DELAY_SEC,
             },
         ),
         (
@@ -177,6 +167,12 @@ pub fn quick_choices() -> Vec<(&'static str, Schedule)> {
     ]
 }
 
+pub fn matches_quick_choice(schedule: &Schedule) -> Option<usize> {
+    quick_choices()
+        .iter()
+        .position(|(_, choice)| choice == schedule)
+}
+
 pub fn format_delay(seconds: u64) -> String {
     if seconds >= 3600 && seconds.is_multiple_of(3600) {
         format!("{}h", seconds / 3600)
@@ -194,7 +190,6 @@ mod tests {
     #[test]
     fn generates_on_calendar_for_each_preset() {
         let cases = [
-            (SchedulePreset::Hourly, "*-*-* *:00:00".to_string()),
             (
                 SchedulePreset::EveryNHours { hours: 6 },
                 "*-*-* 00/06:00:00".to_string(),
@@ -222,18 +217,6 @@ mod tests {
                 "Mon *-*-* 09:15:00".to_string(),
             ),
             (
-                SchedulePreset::Spread {
-                    period: SpreadPeriod::Daily,
-                },
-                "daily".to_string(),
-            ),
-            (
-                SchedulePreset::Spread {
-                    period: SpreadPeriod::Weekly,
-                },
-                "weekly".to_string(),
-            ),
-            (
                 SchedulePreset::Custom {
                     calendar: "Fri *-*-* 10:00:00".to_string(),
                 },
@@ -246,28 +229,51 @@ mod tests {
     }
 
     #[test]
-    fn default_schedule_is_daily_with_a_small_jitter() {
+    fn default_schedule_is_daily_anchor_with_jitter() {
         let schedule = Schedule::default();
-        assert_eq!(
-            schedule.preset,
-            SchedulePreset::Spread {
-                period: SpreadPeriod::Daily
-            }
-        );
-        assert_eq!(schedule.preset.on_calendar(), "daily");
+        assert_eq!(schedule.preset.on_calendar(), "*-*-* 00:00:00");
         assert_eq!(schedule.randomized_delay_sec, 1_800);
     }
 
     #[test]
-    fn spread_summaries_mention_window_and_delay() {
-        let schedule = Schedule::default();
-        assert_eq!(schedule.summary(), "daily spread (≤30min)");
+    fn legacy_spread_normalizes_to_daily_anchor() {
+        let legacy = SchedulePreset::LegacySpread {
+            period: Some("daily".to_string()),
+        };
+        assert_eq!(
+            legacy.clone().normalized(),
+            SchedulePreset::Daily { hour: 0, minute: 0 }
+        );
+        assert_eq!(legacy.on_calendar(), "daily");
+    }
+
+    #[test]
+    fn legacy_spround_round_trips_from_old_config() {
+        let text = "preset = \"spread\"\nperiod = \"daily\"\nrandomized_delay_sec = 1800";
+        let schedule: Schedule = toml::from_str(text).unwrap();
+        assert!(matches!(
+            schedule.preset,
+            SchedulePreset::LegacySpread { .. }
+        ));
+        let normalized = Schedule {
+            preset: schedule.preset.normalized(),
+            randomized_delay_sec: schedule.randomized_delay_sec,
+        };
+        assert_eq!(normalized, Schedule::default());
+    }
+
+    #[test]
+    fn quick_choices_match_their_own_schedules() {
+        for (index, (_, choice)) in quick_choices().iter().enumerate() {
+            assert_eq!(matches_quick_choice(choice), Some(index));
+        }
+        assert_eq!(matches_quick_choice(&Schedule::default()), Some(0));
     }
 
     #[test]
     fn formats_delays_in_human_units() {
-        assert_eq!(format_delay(43_200), "12h");
-        assert_eq!(format_delay(900), "15min");
+        assert_eq!(format_delay(3_600), "1h");
+        assert_eq!(format_delay(1_800), "30min");
         assert_eq!(format_delay(45), "45s");
     }
 
@@ -287,30 +293,8 @@ mod tests {
     }
 
     #[test]
-    fn spread_round_trips_through_toml() {
-        let schedule = Schedule::default();
-        let text = toml::to_string(&schedule).unwrap();
-        assert!(text.contains("preset = \"spread\""));
-        assert!(text.contains("period = \"daily\""));
-        let back: Schedule = toml::from_str(&text).unwrap();
-        assert_eq!(schedule, back);
-    }
-
-    #[test]
-    fn quick_choices_offer_distinct_schedules() {
-        let choices = quick_choices();
-        assert!(choices.len() >= 4);
-        let summaries: Vec<String> = choices.iter().map(|(_, s)| s.summary()).collect();
-        let mut unique = summaries.clone();
-        unique.sort();
-        unique.dedup();
-        assert_eq!(unique.len(), summaries.len());
-        assert_eq!(choices[0].1, Schedule::default());
-    }
-
-    #[test]
     fn missing_randomized_delay_falls_back_to_default() {
-        let schedule: Schedule = toml::from_str("preset = 'hourly'").unwrap();
+        let schedule: Schedule = toml::from_str("preset = 'daily'\nhour = 5\nminute = 0").unwrap();
         assert_eq!(schedule.randomized_delay_sec, 900);
     }
 }

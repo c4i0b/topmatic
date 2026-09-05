@@ -25,6 +25,67 @@ impl LineEdit {
     }
 }
 
+pub struct FilterState {
+    pub edit: LineEdit,
+    pub active: bool,
+}
+
+impl FilterState {
+    pub fn new() -> Self {
+        Self {
+            edit: LineEdit::new(String::new()),
+            active: false,
+        }
+    }
+
+    pub fn is_engaged(&self) -> bool {
+        self.active || !self.edit.value.is_empty()
+    }
+
+    pub fn text(&self) -> &str {
+        &self.edit.value
+    }
+
+    pub fn matches(&self, haystack: &str) -> bool {
+        let needle = self.edit.value.to_lowercase();
+        needle.is_empty() || haystack.to_lowercase().contains(&needle)
+    }
+
+    pub fn start(&mut self) {
+        self.active = true;
+    }
+
+    pub fn handle(&mut self, key: KeyEvent) -> FilterAction {
+        match key.code {
+            KeyCode::Enter => {
+                self.active = false;
+                FilterAction::Committed
+            }
+            KeyCode::Esc => {
+                self.active = false;
+                self.edit = LineEdit::new(String::new());
+                FilterAction::Cleared
+            }
+            _ => {
+                self.edit.handle_key(key);
+                FilterAction::Changed
+            }
+        }
+    }
+}
+
+impl Default for FilterState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub enum FilterAction {
+    Changed,
+    Committed,
+    Cleared,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,5 +109,40 @@ mod tests {
         let mut edit = LineEdit::new("x");
         edit.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert_eq!(edit.value, "x");
+    }
+
+    #[test]
+    fn filter_lifecycle_start_type_commit_clear() {
+        let mut filter = FilterState::new();
+        assert!(!filter.is_engaged());
+        assert!(filter.matches("anything"));
+
+        filter.start();
+        assert!(filter.is_engaged());
+        assert!(matches!(
+            filter.handle(key(KeyCode::Char('f'))),
+            FilterAction::Changed
+        ));
+        assert_eq!(filter.text(), "f");
+        assert!(filter.matches("Flatpak"));
+        assert!(!filter.matches("cargo"));
+
+        assert!(matches!(
+            filter.handle(key(KeyCode::Enter)),
+            FilterAction::Committed
+        ));
+        assert!(
+            !filter.active,
+            "committed filter stops editing but keeps matching"
+        );
+        assert!(filter.matches("flatpak"));
+
+        filter.start();
+        assert!(matches!(
+            filter.handle(key(KeyCode::Esc)),
+            FilterAction::Cleared
+        ));
+        assert_eq!(filter.text(), "");
+        assert!(filter.matches("cargo"));
     }
 }

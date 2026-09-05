@@ -20,12 +20,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, ListItem, Paragraph};
 
 use crate::config::{self, AppConfig};
-use crate::domain::profile::NotifyPolicy;
 use crate::paths::Paths;
 use crate::runner::{self, RunOutcome, notify::NullNotify, read_status};
 use crate::systemd::{RealSystemdCtl, SystemdCtl, sync as systemd_sync};
 
-use input::LineEdit;
+use input::{FilterState, LineEdit};
 
 pub enum View {
     Dashboard,
@@ -46,8 +45,7 @@ pub struct App {
     pub view: View,
     pub selected: usize,
     pub rows: Vec<dashboard::ProfileRow>,
-    pub filter: LineEdit,
-    pub filter_editing: bool,
+    pub filter: FilterState,
     pub list_area: Cell<Rect>,
     pub message: String,
     pub run_rx: Option<mpsc::Receiver<Result<RunOutcome, String>>>,
@@ -108,8 +106,7 @@ impl App {
             view: View::Dashboard,
             selected: 0,
             rows: Vec::new(),
-            filter: LineEdit::new(String::new()),
-            filter_editing: false,
+            filter: FilterState::new(),
             list_area: Cell::new(Rect::default()),
             message: String::new(),
             run_rx: None,
@@ -185,19 +182,18 @@ impl App {
     }
 
     pub fn visible_rows(&self) -> Vec<&dashboard::ProfileRow> {
-        let needle = self.filter.value.to_lowercase();
         self.rows
             .iter()
-            .filter(|row| needle.is_empty() || row.name.to_lowercase().contains(&needle))
+            .filter(|row| self.filter.matches(&row.name))
             .collect()
     }
 
     pub fn filtering(&self) -> bool {
-        !self.filter.value.is_empty() || self.filter_editing
+        self.filter.is_engaged()
     }
 
     pub fn filter_text(&self) -> &str {
-        &self.filter.value
+        self.filter.text()
     }
 
     pub fn selected_profile(
@@ -292,8 +288,9 @@ impl App {
     }
 
     fn handle_dashboard_key(&mut self, key: KeyEvent) {
-        if self.filter_editing {
-            self.handle_filter_key(key);
+        if self.filter.active {
+            self.filter.handle(key);
+            self.clamp_selection();
             return;
         }
         match key.code {
@@ -307,13 +304,13 @@ impl App {
             }
             KeyCode::Enter => self.open_editor_for_selected(),
             KeyCode::Esc => {
-                if self.filtering() {
-                    self.filter = LineEdit::new(String::new());
+                if self.filter.is_engaged() {
+                    self.filter.edit = LineEdit::new(String::new());
                     self.selected = 0;
                 }
             }
             KeyCode::Char(c) => match c.to_ascii_lowercase() {
-                '/' => self.filter_editing = true,
+                '/' => self.filter.start(),
                 '?' => self.view = View::Help,
                 'n' => self.view = View::PresetPicker { index: 0 },
                 'e' => self.open_editor_for_selected(),
@@ -330,27 +327,6 @@ impl App {
                 _ => {}
             },
             _ => {}
-        }
-    }
-
-    fn handle_filter_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Enter => self.filter_editing = false,
-            KeyCode::Esc => {
-                self.filter_editing = false;
-                self.filter = LineEdit::new(String::new());
-                self.selected = 0;
-            }
-            KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-            KeyCode::Down => {
-                if self.selected + 1 < self.visible_rows().len() {
-                    self.selected += 1;
-                }
-            }
-            _ => {
-                self.filter.handle_key(key);
-                self.clamp_selection();
-            }
         }
     }
 
@@ -607,7 +583,7 @@ impl App {
     }
 
     fn draw_footer(&self, frame: &mut Frame, area: Rect) {
-        let hints = if self.filter_editing {
+        let hints = if self.filter.active {
             "filter: type…  Enter accept  Esc clear  ↑↓ move"
         } else {
             match &self.view {
@@ -621,8 +597,8 @@ impl App {
                 View::Confirm { .. } => "y confirm delete  esc cancels  q quit",
             }
         };
-        let prefix = if self.filter_editing {
-            format!(" /{}", self.filter.value)
+        let prefix = if self.filter.active {
+            format!(" /{}", self.filter.text())
         } else if self.message.is_empty() {
             String::new()
         } else {
@@ -636,74 +612,176 @@ impl App {
     }
 
     fn draw_editor(&self, state: &editor::EditorState, frame: &mut Frame, area: Rect) {
-        let [left, right] =
-            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
-                .areas(area);
-
-        let inner_height = left.height.saturating_sub(2) as usize;
-        let steps_height = inner_height
-            .saturating_sub(2 + usize::from(state.steps_filtering))
-            .max(1);
-
         let title = match &state.original_name {
             Some(name) => format!("edit profile — {name}"),
             None => "new profile".to_string(),
         };
+        let inner_height = area.height.saturating_sub(2) as usize;
 
+        let mut lines: Vec<Line> = Vec::new();
+        let focus_steps = state.section == editor::Section::Steps;
         let steps_total = state.filtered_steps().len();
-        let mut steps_scroll = state.steps_scroll;
-        let (steps_start, steps_end) = editor::window_bounds(
-            state.list_index,
-            steps_total,
-            steps_height,
-            &mut steps_scroll,
-        );
-        let filter_label = if state.steps_filtering {
-            format!("filter: {} ", state.filter.value)
+        let filter_label = if state.steps_filter.active {
+            format!("filter: {}▏", state.steps_filter.text())
         } else {
-            "/ filter ".to_string()
+            "/ filter".to_string()
         };
-        let mut steps_lines = vec![Line::from(vec![
-            focus_marker(state.section == editor::Section::Steps),
+        lines.push(Line::from(vec![
+            focus_marker(focus_steps),
             Span::raw(format!(
                 " steps (selected: {}) [{}-{}/{}] {}",
                 state.selected_steps.len(),
-                if steps_total == 0 { 0 } else { steps_start + 1 },
-                steps_end,
+                if steps_total == 0 {
+                    0
+                } else {
+                    state.steps_window().0 + 1
+                },
+                state.steps_window().1,
                 steps_total,
                 filter_label
             )),
-        ])];
-        if state.steps_filtering {
-            steps_lines.push(Line::from(Span::styled(
-                format!("  {}▏", state.filter.value),
-                Style::new().fg(Color::Cyan),
-            )));
-        }
-        for (offset, entry) in state.filtered_steps()[steps_start..steps_end]
+        ]));
+        let (steps_start, steps_end) = state.steps_window();
+        for (offset, id) in state.filtered_steps()[steps_start..steps_end]
             .iter()
             .enumerate()
         {
             let index = steps_start + offset;
-            let marker = if state.selected_steps.contains(*entry) {
+            let marker = if state.selected_steps.contains(*id) {
                 "[x]"
             } else {
                 "[ ]"
             };
-            let line = Line::from(vec![
-                Span::raw(if index == state.list_index {
+            lines.push(Line::from(format!(
+                "{}{marker} {}",
+                if focus_steps && index == state.list_index {
                     "▶ "
                 } else {
                     "  "
-                }),
-                Span::raw(format!("{marker} ")),
-                Span::raw(entry.as_str()),
-            ]);
-            steps_lines.push(line);
+                },
+                id
+            )));
         }
 
-        let left_block = Paragraph::new(steps_lines).block(Block::bordered().title(title));
-        frame.render_widget(left_block, left);
+        lines.push(Line::from(""));
+        let focus_schedule = state.section == editor::Section::Schedule;
+        lines.push(Line::from(vec![
+            focus_marker(focus_schedule),
+            Span::styled(
+                format!("schedule: {}", state.schedule.summary()),
+                Style::new().fg(Color::Cyan),
+            ),
+        ]));
+        let choices = crate::domain::schedule::quick_choices();
+        for (index, (label, _)) in choices.iter().enumerate() {
+            let selected =
+                crate::domain::schedule::matches_quick_choice(&state.schedule) == Some(index);
+            lines.push(Line::from(format!(
+                "{}{} {}{}",
+                if focus_schedule && state.schedule_index == index {
+                    "▶ "
+                } else {
+                    "  "
+                },
+                if selected { "[" } else { " " },
+                label,
+                if selected { "]" } else { " " },
+            )));
+        }
+        for (row, text) in schedule_context_lines(state).iter().enumerate() {
+            let index = choices.len() + 1 + row;
+            lines.push(Line::from(format!(
+                "{}{}",
+                if focus_schedule && state.schedule_index == index {
+                    "▶ "
+                } else {
+                    "  "
+                },
+                text
+            )));
+        }
+        let custom_row = choices.len();
+        lines.push(Line::from(format!(
+            "{}custom OnCalendar: {}",
+            if focus_schedule && state.schedule_index == custom_row {
+                "▶ "
+            } else {
+                "  "
+            },
+            state.custom.value
+        )));
+        let jitter_row = state_rows_count(state) - 1;
+        lines.push(Line::from(format!(
+            "{}jitter: {}",
+            if focus_schedule && state.schedule_index == jitter_row {
+                "▶ "
+            } else {
+                "  "
+            },
+            crate::domain::schedule::format_delay(state.schedule.randomized_delay_sec)
+        )));
+
+        lines.push(Line::from(""));
+        let focus_options = state.section == editor::Section::Options;
+        lines.push(Line::from(vec![
+            focus_marker(focus_options),
+            Span::styled("options", Style::new().fg(Color::Cyan)),
+        ]));
+        lines.push(Line::from(format!(
+            "{}cleanup:  {}yes{}  {}no{}",
+            if focus_options && state.option_index == 0 {
+                "▶ "
+            } else {
+                "  "
+            },
+            if state.cleanup { "[" } else { " " },
+            if state.cleanup { "]" } else { " " },
+            if !state.cleanup { "[" } else { " " },
+            if !state.cleanup { "]" } else { " " },
+        )));
+        let notify = state.notify;
+        lines.push(Line::from(format!(
+            "{}notify:   {}always{}  {}on failure{}  {}never{}",
+            if focus_options && state.option_index == 1 {
+                "▶ "
+            } else {
+                "  "
+            },
+            if notify == crate::domain::profile::NotifyPolicy::Always {
+                "["
+            } else {
+                " "
+            },
+            if notify == crate::domain::profile::NotifyPolicy::Always {
+                "]"
+            } else {
+                " "
+            },
+            if notify == crate::domain::profile::NotifyPolicy::OnFailure {
+                "["
+            } else {
+                " "
+            },
+            if notify == crate::domain::profile::NotifyPolicy::OnFailure {
+                "]"
+            } else {
+                " "
+            },
+            if notify == crate::domain::profile::NotifyPolicy::Never {
+                "["
+            } else {
+                " "
+            },
+            if notify == crate::domain::profile::NotifyPolicy::Never {
+                "]"
+            } else {
+                " "
+            },
+        )));
+
+        let _ = inner_height;
+        let paragraph = Paragraph::new(lines).block(Block::bordered().title(title));
+        frame.render_widget(paragraph, area);
 
         if let Some(popup) = &state.name_popup {
             let popup_area = centered_rect(area, 60, 5);
@@ -723,95 +801,19 @@ impl App {
             frame.render_widget(Clear, popup_area);
             frame.render_widget(text, popup_area);
         }
-
-        let mut right_lines: Vec<Line> = Vec::new();
-        let focus = state.section == editor::Section::Schedule;
-        right_lines.push(Line::from(vec![
-            focus_marker(focus),
-            Span::raw(" schedule"),
-        ]));
-        for (index, text) in self.schedule_lines(state).iter().enumerate() {
-            right_lines.push(Line::from(vec![
-                Span::raw(if focus && index == state.schedule_index {
-                    "▶ "
-                } else {
-                    "  "
-                }),
-                Span::raw(text.clone()),
-            ]));
-        }
-        right_lines.push(Line::from(""));
-        let focus = state.section == editor::Section::Options;
-        right_lines.push(Line::from(vec![focus_marker(focus), Span::raw(" options")]));
-        let options = [
-            format!("  cleanup (auto-clean): {}", on_off(state.cleanup)),
-            format!("  notify: {}", notify_label(state.notify)),
-        ];
-        for (index, text) in options.iter().enumerate() {
-            right_lines.push(Line::from(vec![
-                Span::raw(if focus && index == state.option_index {
-                    "▶ "
-                } else {
-                    "  "
-                }),
-                Span::raw(text.clone()),
-            ]));
-        }
-
-        let right_block = Paragraph::new(right_lines).block(Block::bordered().title("settings"));
-        frame.render_widget(right_block, right);
-    }
-
-    fn schedule_lines(&self, state: &editor::EditorState) -> Vec<String> {
-        use crate::domain::schedule::SchedulePreset;
-        let mut lines = vec![match &state.schedule.preset {
-            SchedulePreset::Hourly => "preset: hourly".to_string(),
-            SchedulePreset::EveryNHours { hours } => format!("preset: every N hours ({hours}h)"),
-            SchedulePreset::Daily { .. } => "preset: daily at fixed time".to_string(),
-            SchedulePreset::Weekly { .. } => "preset: weekly at fixed time".to_string(),
-            SchedulePreset::Spread { .. } => "preset: spread over the period".to_string(),
-            SchedulePreset::Custom { .. } => "preset: custom OnCalendar".to_string(),
-        }];
-        match &state.schedule.preset {
-            SchedulePreset::Hourly => {}
-            SchedulePreset::EveryNHours { hours } => lines.push(format!("every: {hours} hours")),
-            SchedulePreset::Daily { hour, minute } => {
-                lines.push(format!("at: {hour:02}:{minute:02}{}", state.typed_hint()));
-            }
-            SchedulePreset::Weekly {
-                weekday,
-                hour,
-                minute,
-            } => {
-                lines.push(format!("on: {}", weekday.as_systemd()));
-                lines.push(format!("at: {hour:02}:{minute:02}{}", state.typed_hint()));
-            }
-            SchedulePreset::Spread { period } => lines.push(format!(
-                "window: {}",
-                match period {
-                    crate::domain::schedule::SpreadPeriod::Daily => "daily",
-                    crate::domain::schedule::SpreadPeriod::Weekly => "weekly",
-                }
-            )),
-            SchedulePreset::Custom { .. } => {
-                lines.push(format!("expr: {}", state.custom.value));
-            }
-        }
-        lines.push(format!(
-            "max random delay: {}",
-            crate::domain::schedule::format_delay(state.schedule.randomized_delay_sec)
-        ));
-        lines
     }
 
     fn draw_help(&self, frame: &mut Frame, area: Rect) {
         let text = vec![
             Line::from("topmatic help"),
             Line::from(""),
-            Line::from("n  new profile      e  edit profile      space  pause/resume"),
-            Line::from("d  delete profile (also purges run history)"),
-            Line::from("r  run now via systemd      t  dry-run test in foreground thread"),
-            Line::from("l  browse run logs      L  enable lingering      R  resync units"),
+            Line::from("n  new profile (presets)      e  edit profile      d  delete profile"),
+            Line::from("r  run now via systemd        t  dry-run test"),
+            Line::from("l  browse run logs            g  enable lingering"),
+            Line::from("s  resync units               /  filter profiles"),
+            Line::from(""),
+            Line::from("editor: tab switches section, enter asks the name and saves,"),
+            Line::from("space or arrows pick choices, / filters steps, esc cancels, q quits"),
             Line::from(""),
             Line::from(
                 "Config: ~/.config/topmatic/config.toml (source of truth, editable by hand)",
@@ -843,6 +845,33 @@ impl App {
     }
 }
 
+fn schedule_context_lines(state: &editor::EditorState) -> Vec<String> {
+    use crate::domain::schedule::SchedulePreset;
+    match &state.schedule.preset {
+        SchedulePreset::EveryNHours { hours } => vec![format!("every: {hours}h")],
+        SchedulePreset::Daily { hour, minute } => {
+            vec![
+                format!("hour: {hour:02} (←→)"),
+                format!("minute: {minute:02}"),
+            ]
+        }
+        SchedulePreset::Weekly {
+            weekday,
+            hour,
+            minute,
+        } => vec![
+            format!("weekday: {}", weekday.as_systemd()),
+            format!("hour: {hour:02}"),
+            format!("minute: {minute:02}"),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn state_rows_count(state: &editor::EditorState) -> usize {
+    let choices = crate::domain::schedule::quick_choices().len();
+    choices + 1 + schedule_context_lines(state).len() + 1
+}
 fn focus_marker(focused: bool) -> Span<'static> {
     if focused {
         Span::styled(
@@ -851,18 +880,6 @@ fn focus_marker(focused: bool) -> Span<'static> {
         )
     } else {
         Span::raw(" ")
-    }
-}
-
-fn on_off(value: bool) -> &'static str {
-    if value { "on" } else { "off" }
-}
-
-fn notify_label(policy: NotifyPolicy) -> &'static str {
-    match policy {
-        NotifyPolicy::Always => "always",
-        NotifyPolicy::OnFailure => "on failure",
-        NotifyPolicy::Never => "never",
     }
 }
 

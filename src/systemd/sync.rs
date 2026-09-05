@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use crate::config::AppConfig;
 use crate::domain::profile::Scope;
+use crate::domain::schedule::SchedulePreset;
 use crate::paths::Paths;
 use crate::util::write_file_if_changed;
 
@@ -21,6 +22,7 @@ use super::units;
 pub struct SyncReport {
     pub templates_installed: bool,
     pub updated_profiles: Vec<String>,
+    pub pruned_drop_ins: Vec<String>,
     pub removed_orphans: Vec<String>,
     pub reloaded: bool,
     pub errors: Vec<String>,
@@ -30,6 +32,7 @@ impl SyncReport {
     pub fn is_clean(&self) -> bool {
         !self.templates_installed
             && self.updated_profiles.is_empty()
+            && self.pruned_drop_ins.is_empty()
             && self.removed_orphans.is_empty()
             && self.errors.is_empty()
     }
@@ -67,6 +70,7 @@ pub fn sync(
 
     let changed_anything = report.templates_installed
         || !report.updated_profiles.is_empty()
+        || !report.pruned_drop_ins.is_empty()
         || !report.removed_orphans.is_empty();
     if changed_anything {
         match ctl.daemon_reload() {
@@ -93,9 +97,18 @@ fn sync_profiles(
             continue;
         }
         known.insert(profile.name.clone());
-        let drop_in_path = unit_dir
-            .join(units::drop_in_dir(&profile.name))
-            .join("10-schedule.conf");
+        if let SchedulePreset::Custom { calendar } = &profile.schedule.preset
+            && let Err(error) = super::validate_on_calendar(calendar)
+        {
+            let _ = ctl.disable_timer(&profile.name);
+            report.errors.push(format!(
+                "{}: invalid OnCalendar, timer disabled: {error}",
+                profile.name
+            ));
+            continue;
+        }
+        let drop_dir = unit_dir.join(units::drop_in_dir(&profile.name));
+        let drop_in_path = drop_dir.join(units::SCHEDULE_DROP_IN);
         match write_file_if_changed(&drop_in_path, &units::timer_drop_in(&profile.schedule)) {
             Ok(true) => report.updated_profiles.push(profile.name.clone()),
             Ok(false) => {}
@@ -105,6 +118,9 @@ fn sync_profiles(
                     .push(format!("{}: drop-in write failed: {error}", profile.name));
                 continue;
             }
+        }
+        if prune_stray_drop_ins(&drop_dir, &profile.name) {
+            report.pruned_drop_ins.push(profile.name.clone());
         }
         let result = if profile.enabled {
             ctl.enable_timer(&profile.name)
@@ -118,6 +134,22 @@ fn sync_profiles(
         }
     }
     known
+}
+
+fn prune_stray_drop_ins(drop_dir: &std::path::Path, _profile: &str) -> bool {
+    let entries = match fs::read_dir(drop_dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+    let mut pruned = false;
+    for entry in entries.flatten() {
+        let is_stray = entry.path().extension().is_some_and(|ext| ext == "conf")
+            && entry.file_name().to_string_lossy() != units::SCHEDULE_DROP_IN;
+        if is_stray && fs::remove_file(entry.path()).is_ok() {
+            pruned = true;
+        }
+    }
+    pruned
 }
 
 fn remove_orphan_drop_ins(
@@ -162,6 +194,64 @@ pub fn purge_profile_state(paths: &Paths, profile: &str) -> io::Result<()> {
     let _ = fs::remove_file(paths.status_file(profile));
     let _ = fs::remove_file(paths.lock_file(profile));
     Ok(())
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct ResetReport {
+    pub removed_orphans: Vec<String>,
+    pub removed_units: bool,
+    pub purged_state: bool,
+    pub config_backup: Option<std::path::PathBuf>,
+}
+
+pub fn reset(ctl: &dyn SystemdCtl, paths: &Paths, include_config: bool) -> ResetReport {
+    let mut report = ResetReport::default();
+    let unit_dir = ctl.unit_dir();
+
+    for instance in ctl.instances() {
+        let _ = ctl.disable_timer(&instance);
+        report.removed_orphans.push(instance);
+    }
+    let _ = ctl.stop_all();
+
+    let mut removed_units = false;
+    let entries = fs::read_dir(&unit_dir)
+        .map(|read_dir| read_dir.flatten().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let managed = name.starts_with("topmatic@")
+            && (name.ends_with(".timer.d")
+                || name == units::SERVICE_TEMPLATE
+                || name == units::TIMER_TEMPLATE);
+        if !managed {
+            continue;
+        }
+        let removed = match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => fs::remove_dir_all(entry.path()).is_ok(),
+            Ok(_) => fs::remove_file(entry.path()).is_ok(),
+            Err(_) => false,
+        };
+        removed_units = removed_units || removed;
+    }
+    report.removed_units = removed_units;
+
+    if paths.state_dir.exists() && fs::remove_dir_all(&paths.state_dir).is_ok() {
+        report.purged_state = true;
+    }
+
+    if include_config {
+        let config_file = paths.config_file();
+        if config_file.exists() {
+            let backup = config_file.with_extension("toml.bak");
+            if fs::rename(&config_file, &backup).is_ok() {
+                report.config_backup = Some(backup);
+            }
+        }
+    }
+
+    let _ = ctl.daemon_reload();
+    report
 }
 
 #[cfg(test)]
@@ -220,6 +310,11 @@ impl SystemdCtl for FakeCtl {
 
     fn start_service(&self, profile: &str) -> io::Result<()> {
         self.record(format!("start:{profile}"));
+        Ok(())
+    }
+
+    fn stop_all(&self) -> io::Result<()> {
+        self.record("stop_all".to_string());
         Ok(())
     }
 
@@ -374,5 +469,111 @@ mod tests {
         assert!(!paths.logs_dir("alpha").exists());
         assert!(!paths.status_file("alpha").exists());
         assert!(!paths.lock_file("alpha").exists());
+    }
+
+    #[test]
+    fn prunes_stray_conf_files_inside_managed_drop_in_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let drop_dir = tmp.path().join("topmatic@alpha.timer.d");
+        fs::create_dir_all(&drop_dir).unwrap();
+        fs::write(
+            drop_dir.join("20-manual.conf"),
+            "[Timer]\nOnCalendar=hourly\n",
+        )
+        .unwrap();
+        fs::write(drop_dir.join("notes.txt"), "keep me").unwrap();
+        let ctl = FakeCtl::new(tmp.path().to_path_buf());
+        let config = config_of(&[profile("alpha", true)]);
+
+        let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
+
+        assert!(!drop_dir.join("20-manual.conf").exists());
+        assert!(drop_dir.join("notes.txt").exists());
+        assert_eq!(report.pruned_drop_ins, vec!["alpha"]);
+    }
+
+    #[test]
+    fn invalid_custom_calendar_disables_instead_of_enabling() {
+        if which_systemd_analyze().is_none() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let ctl = FakeCtl::new(tmp.path().to_path_buf());
+        let mut broken = profile("alpha", true);
+        broken.schedule.preset = SchedulePreset::Custom {
+            calendar: "definitely not a calendar".to_string(),
+        };
+        let config = config_of(&[broken]);
+
+        let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
+
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.contains("invalid OnCalendar"))
+        );
+        assert!(!ctl.calls().contains(&"enable:alpha".to_string()));
+        assert!(ctl.calls().contains(&"disable:alpha".to_string()));
+    }
+
+    fn which_systemd_analyze() -> Option<std::path::PathBuf> {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("systemd-analyze"))
+            .find(|candidate| candidate.is_file())
+    }
+
+    #[test]
+    fn reset_removes_units_state_and_backs_up_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let unit_dir = tmp.path().join("units");
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+
+        fs::create_dir_all(unit_dir.join("topmatic@alpha.timer.d")).unwrap();
+        fs::write(unit_dir.join("topmatic@.service"), "unit").unwrap();
+        fs::write(unit_dir.join("topmatic@.timer"), "unit").unwrap();
+        fs::write(unit_dir.join("unrelated.timer"), "keep").unwrap();
+        fs::create_dir_all(paths.logs_dir("alpha")).unwrap();
+        fs::create_dir_all(&paths.config_dir).unwrap();
+        fs::write(paths.config_file(), "# config").unwrap();
+
+        let mut ctl = FakeCtl::new(unit_dir.clone());
+        ctl.existing_instances = vec!["alpha".to_string()];
+
+        let report = reset(&ctl, &paths, true);
+
+        assert!(!unit_dir.join("topmatic@.service").exists());
+        assert!(!unit_dir.join("topmatic@.timer").exists());
+        assert!(!unit_dir.join("topmatic@alpha.timer.d").exists());
+        assert!(unit_dir.join("unrelated.timer").exists());
+        assert!(!paths.state_dir.exists());
+        assert!(!paths.config_file().exists());
+        assert_eq!(
+            report.config_backup,
+            Some(paths.config_file().with_extension("toml.bak"))
+        );
+        assert!(
+            fs::read_to_string(paths.config_file().with_extension("toml.bak"))
+                .unwrap()
+                .contains("# config")
+        );
+        assert!(ctl.calls().contains(&"stop_all".to_string()));
+        assert!(ctl.calls().contains(&"disable:alpha".to_string()));
+        assert!(ctl.calls().contains(&"reload".to_string()));
+    }
+
+    #[test]
+    fn reset_without_config_keeps_config_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        fs::create_dir_all(&paths.config_dir).unwrap();
+        fs::write(paths.config_file(), "# config").unwrap();
+        let ctl = FakeCtl::new(tmp.path().to_path_buf());
+
+        let report = reset(&ctl, &paths, false);
+
+        assert!(paths.config_file().exists());
+        assert_eq!(report.config_backup, None);
     }
 }

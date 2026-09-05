@@ -5,6 +5,7 @@ use crate::domain::schedule::Schedule;
 
 pub const SERVICE_TEMPLATE: &str = "topmatic@.service";
 pub const TIMER_TEMPLATE: &str = "topmatic@.timer";
+pub const SCHEDULE_DROP_IN: &str = "10-schedule.conf";
 
 pub struct ScopeDirs {
     pub units_dir: PathBuf,

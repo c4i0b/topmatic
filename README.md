@@ -13,6 +13,7 @@ Flatpaks, cargo installs, npm globals, pipx apps… [topgrade](https://github.co
 - Machines are off sometimes: timers are persistent and catch up missed runs
 - Jobs run at minimum priority (`Nice=19`, batch CPU, idle IO) — never in your way
 - Default schedule spreads runs over the day (randomized), so nothing hammers mirrors at a privileged hour
+- Self-healing: every start rewrites drifted unit files, removes orphan timers and prunes stray schedule overrides; `topmatic doctor` diagnoses and `topmatic reset` starts clean
 
 ## Requirements
 
@@ -33,9 +34,11 @@ Then run `topmatic` once: it installs the systemd user units and offers to enabl
 ```sh
 topmatic          # TUI
 topmatic list     # profiles, next run, last status
+topmatic doctor   # diagnose + auto-repair unit drift
 topmatic sync     # converge systemd units to the config
 topmatic edit     # edit the config with $EDITOR, then sync
 topmatic run <profile> [--dry-run]
+topmatic reset [--all]   # remove units/schedules/history; --all also archives the config
 ```
 
 In the TUI: `n` new, `e` edit, `space` pause/resume, `d` delete, `r` run now, `t` dry-run test, `l` logs, `?` help.

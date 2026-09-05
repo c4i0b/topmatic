@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::profile::Profile;
+use crate::domain::profile::{Profile, sanitize_name};
+use crate::domain::schedule::SchedulePreset;
 use crate::paths::Paths;
 
 const HEADER: &str =
@@ -10,6 +11,49 @@ const HEADER: &str =
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<Profile>,
+}
+
+pub fn validate_profile(profile: &Profile) -> Vec<String> {
+    let mut errors = Vec::new();
+    if sanitize_name(&profile.name).is_err() {
+        errors.push(format!(
+            "invalid name {:?}: must match [a-zA-Z0-9][a-zA-Z0-9_.-]*",
+            profile.name
+        ));
+    }
+    if profile.steps.is_empty() {
+        errors.push("no steps selected".to_string());
+    }
+    match &profile.schedule.preset {
+        SchedulePreset::EveryNHours { hours } if !(1..=23).contains(hours) => {
+            errors.push(format!("every-n-hours out of range (1..=23): {hours}"));
+        }
+        SchedulePreset::Daily { hour, minute } | SchedulePreset::Weekly { hour, minute, .. }
+            if *hour > 23 || *minute > 59 =>
+        {
+            errors.push(format!("time out of range: {hour:02}:{minute:02}"));
+        }
+        SchedulePreset::Custom { calendar } if calendar.trim().is_empty() => {
+            errors.push("custom OnCalendar expression is empty".to_string());
+        }
+        _ => {}
+    }
+    errors
+}
+
+pub fn load_validated(paths: &Paths) -> anyhow::Result<(AppConfig, Vec<String>)> {
+    let raw = load(paths)?;
+    let mut config = AppConfig::default();
+    let mut issues = Vec::new();
+    for profile in raw.profiles {
+        let errors = validate_profile(&profile);
+        if errors.is_empty() {
+            config.upsert(profile);
+        } else {
+            issues.push(format!("{}: {}", profile.name, errors.join("; ")));
+        }
+    }
+    Ok((config, issues))
 }
 
 impl AppConfig {
@@ -118,5 +162,54 @@ mod tests {
     fn load_returns_empty_config_when_file_missing() {
         let loaded = load(&paths()).unwrap();
         assert_eq!(loaded, AppConfig::default());
+    }
+
+    fn profile_named(name: &str) -> Profile {
+        Profile {
+            name: name.to_string(),
+            ..sample_profile("x")
+        }
+    }
+
+    #[test]
+    fn validator_rejects_hand_edited_nonsense() {
+        let mut bad_hours = sample_profile("alpha");
+        bad_hours.schedule.preset = SchedulePreset::Daily {
+            hour: 25,
+            minute: 61,
+        };
+        let mut bad_every = sample_profile("alpha");
+        bad_every.schedule.preset = SchedulePreset::EveryNHours { hours: 0 };
+        let mut no_steps = sample_profile("alpha");
+        no_steps.steps = Vec::new();
+
+        assert_eq!(validate_profile(&profile_named("has space")).len(), 1);
+        assert_eq!(validate_profile(&profile_named("-lead")).len(), 1);
+        assert!(!validate_profile(&bad_hours).is_empty());
+        assert!(!validate_profile(&bad_every).is_empty());
+        assert!(!validate_profile(&no_steps).is_empty());
+        assert!(validate_profile(&sample_profile("flatpak-daily")).is_empty());
+    }
+
+    #[test]
+    fn load_validated_filters_invalid_profiles_and_reports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let mut raw = AppConfig::default();
+        raw.upsert(sample_profile("good-one"));
+        let mut bad = sample_profile("bad job");
+        bad.schedule.preset = SchedulePreset::Custom {
+            calendar: "  ".into(),
+        };
+        raw.upsert(bad);
+        save(&paths, &raw).unwrap();
+
+        let (valid, issues) = load_validated(&paths).unwrap();
+        assert_eq!(valid.profiles.len(), 1);
+        assert_eq!(valid.profiles[0].name, "good-one");
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].starts_with("bad job"));
+        assert!(issues[0].contains("invalid name"));
+        assert!(issues[0].contains("OnCalendar"));
     }
 }

@@ -72,7 +72,7 @@ fn app_loop(terminal: &mut ratatui::DefaultTerminal) -> anyhow::Result<()> {
 impl App {
     pub fn boot() -> anyhow::Result<Self> {
         let paths = Paths::from_env();
-        let config = config::load(&paths)?;
+        let (config, issues) = config::load_validated(&paths)?;
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
@@ -99,11 +99,19 @@ impl App {
         let report = systemd_sync::sync(&app.config, &app.topmatic_bin, &app.ctl);
         app.message = if report.errors.is_empty() {
             format!(
-                "synced{}{}",
+                "synced{}{}{}",
                 if report.templates_installed {
                     ", installed unit templates"
                 } else {
                     ""
+                },
+                if report.pruned_drop_ins.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        ", pruned {} stray drop-in file(s)",
+                        report.pruned_drop_ins.len()
+                    )
                 },
                 if report.removed_orphans.is_empty() {
                     String::new()
@@ -114,6 +122,13 @@ impl App {
         } else {
             format!("sync errors: {}", report.errors.join("; "))
         };
+        if !issues.is_empty() {
+            app.message = format!(
+                "skipped {} invalid profile(s); run topmatic doctor — {}",
+                issues.len(),
+                app.message
+            );
+        }
         if app.topgrade_bin.is_none() {
             app.message = "warning: topgrade not found in PATH".to_string();
         }

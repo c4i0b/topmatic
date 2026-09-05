@@ -14,6 +14,7 @@ pub trait SystemdCtl {
     fn enable_timer(&self, profile: &str) -> io::Result<()>;
     fn disable_timer(&self, profile: &str) -> io::Result<()>;
     fn start_service(&self, profile: &str) -> io::Result<()>;
+    fn stop_all(&self) -> io::Result<()>;
     fn instances(&self) -> Vec<String>;
     fn next_run(&self, profile: &str) -> Option<DateTime<Utc>>;
     fn linger_enabled(&self) -> Option<bool>;
@@ -57,6 +58,10 @@ impl SystemdCtl for RealSystemdCtl {
     fn start_service(&self, profile: &str) -> io::Result<()> {
         let instance = format!("topmatic@{profile}.service");
         run_status(self.systemctl(&["start", &instance]))
+    }
+
+    fn stop_all(&self) -> io::Result<()> {
+        run_status(self.systemctl(&["stop", "topmatic@*.service", "topmatic@*.timer"]))
     }
 
     fn instances(&self) -> Vec<String> {

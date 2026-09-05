@@ -29,10 +29,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Run { profile, dry_run }) => cmd_run(&profile, dry_run),
         Some(Command::Sync) => cmd_sync(),
-        None => {
-            eprintln!("TUI arrives in milestone M5");
-            Ok(())
-        }
+        None => topmatic::tui::run(),
     }
 }
 

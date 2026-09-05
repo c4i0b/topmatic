@@ -85,6 +85,7 @@ pub const CURATED: &[(&str, &[&str])] = &[
     ),
 ];
 
+#[derive(Debug, Clone)]
 pub struct StepEntry {
     pub id: String,
     pub category: Option<&'static str>,

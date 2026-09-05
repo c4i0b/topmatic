@@ -19,6 +19,25 @@ pub enum NotifyPolicy {
     Never,
 }
 
+impl NotifyPolicy {
+    pub const ALL: [NotifyPolicy; 3] = [
+        NotifyPolicy::Always,
+        NotifyPolicy::OnFailure,
+        NotifyPolicy::Never,
+    ];
+
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL[index % Self::ALL.len()]
+    }
+
+    pub fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|policy| *policy == self)
+            .unwrap_or(1)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,

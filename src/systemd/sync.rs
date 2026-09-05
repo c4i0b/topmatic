@@ -218,6 +218,11 @@ impl SystemdCtl for FakeCtl {
         Ok(())
     }
 
+    fn start_service(&self, profile: &str) -> io::Result<()> {
+        self.record(format!("start:{profile}"));
+        Ok(())
+    }
+
     fn instances(&self) -> Vec<String> {
         self.existing_instances.clone()
     }

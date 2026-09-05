@@ -17,6 +17,10 @@ impl AppConfig {
         self.profiles.iter().find(|p| p.name == name)
     }
 
+    pub fn profile_mut(&mut self, name: &str) -> Option<&mut Profile> {
+        self.profiles.iter_mut().find(|p| p.name == name)
+    }
+
     pub fn upsert(&mut self, profile: Profile) {
         match self.profiles.iter_mut().find(|p| p.name == profile.name) {
             Some(existing) => *existing = profile,

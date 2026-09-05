@@ -21,9 +21,9 @@ pub struct ProfileRow {
 
 fn state_marker(row: &ProfileRow) -> Span<'static> {
     if row.timer_active {
-        Span::styled("●".to_string(), Style::new().fg(Color::Green))
+        Span::styled("•".to_string(), Style::new().fg(Color::Green))
     } else {
-        Span::styled("●".to_string(), Style::new().fg(Color::Yellow))
+        Span::styled("•".to_string(), Style::new().fg(Color::Yellow))
     }
 }
 
@@ -108,7 +108,7 @@ fn detail_lines<'a>(profile: &Profile, row: &ProfileRow, log_tail: Option<&str>)
         ]),
         Line::from(vec![
             Span::styled("steps      ", Style::new().fg(Color::Cyan)),
-            Span::styled(profile.steps.join(" "), Style::new().fg(Color::Green)),
+            Span::styled(step_preview(&profile.steps), Style::new().fg(Color::Green)),
         ]),
         Line::from(vec![
             Span::styled("options    ", Style::new().fg(Color::Cyan)),
@@ -142,6 +142,17 @@ fn notify_label(policy: crate::domain::profile::NotifyPolicy) -> &'static str {
         crate::domain::profile::NotifyPolicy::OnFailure => "on failure",
         crate::domain::profile::NotifyPolicy::Never => "never",
     }
+}
+
+const STEPS_PREVIEW: usize = 6;
+
+fn step_preview(steps: &[String]) -> String {
+    if steps.len() <= STEPS_PREVIEW {
+        return steps.join(" ");
+    }
+    let shown: Vec<&str> = steps[..STEPS_PREVIEW].iter().map(String::as_str).collect();
+    let extra = steps.len() - STEPS_PREVIEW;
+    format!("{} … and {extra} more", shown.join(" "))
 }
 
 pub struct PaneAreas {
@@ -197,4 +208,168 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
     frame.render_widget(paragraph, detail_area);
 
     PaneAreas { list: list_area }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::profile::Profile;
+
+    fn profile_with_steps(steps: usize) -> Profile {
+        Profile {
+            name: "all-daily".to_string(),
+            steps: (0..steps).map(|i| format!("step_{i}")).collect(),
+            schedule: crate::domain::schedule::Schedule::default(),
+            cleanup: true,
+            notify: crate::domain::profile::NotifyPolicy::OnFailure,
+            scope: crate::domain::profile::Scope::User,
+        }
+    }
+
+    fn detail_text(detail: &[Line<'_>]) -> Vec<String> {
+        detail
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|span| span.content.clone())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn steps_preview_is_bounded_for_wide_lists() {
+        let profile = profile_with_steps(162);
+        assert_eq!(
+            step_preview(&profile.steps),
+            "step_0 step_1 step_2 step_3 step_4 step_5 … and 156 more"
+        );
+    }
+
+    #[test]
+    fn steps_preview_shows_everything_when_short() {
+        let profile = profile_with_steps(3);
+        assert_eq!(step_preview(&profile.steps), "step_0 step_1 step_2");
+    }
+
+    #[test]
+    fn detail_lines_never_split_step_summary_mid_word() {
+        let profile = profile_with_steps(162);
+        let row = ProfileRow {
+            name: "all-daily".to_string(),
+            schedule: "daily 00:00".to_string(),
+            next_run: None,
+            status: None,
+            timer_active: true,
+        };
+        let lines = detail_text(&detail_lines(&profile, &row, None));
+        let steps = lines
+            .iter()
+            .find(|line| line.starts_with("steps      "))
+            .expect("steps line present");
+        assert_eq!(
+            steps.trim_start().trim_start_matches("steps      "),
+            "step_0 step_1 step_2 step_3 step_4 step_5 … and 156 more",
+            "long profiles render a single clean preview, not a mid-word wrap"
+        );
+        let label = steps
+            .trim_start()
+            .replace("step_0 step_1 step_2 step_3 step_4 step_5 ", "");
+        assert!(
+            label.contains("… and ") && label.ends_with("more"),
+            "truncation marker anchors at a word boundary"
+        );
+    }
+
+    #[test]
+    fn every_detail_line_fits_the_narrow_detail_pane() {
+        let profile = profile_with_steps(162);
+        let row = ProfileRow {
+            name: "all-daily".to_string(),
+            schedule: "daily 00:00".to_string(),
+            next_run: None,
+            status: None,
+            timer_active: true,
+        };
+        let pane_width = 80;
+        for line in detail_text(&detail_lines(&profile, &row, None)) {
+            assert!(
+                line.chars().count() <= pane_width,
+                "detail line overflows the pane: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dashboard_tape_golden_detail_pane_never_splits_a_token() {
+        let profile = Profile {
+            name: "all-daily".to_string(),
+            steps: vec![
+                "am".into(),
+                "android_studio".into(),
+                "antigravity".into(),
+                "app_man".into(),
+                "aqua".into(),
+                "asdf".into(),
+                "atom".into(),
+                "atuin".into(),
+            ],
+            schedule: crate::domain::schedule::Schedule::default(),
+            cleanup: true,
+            notify: crate::domain::profile::NotifyPolicy::OnFailure,
+            scope: crate::domain::profile::Scope::User,
+        };
+        let row = ProfileRow {
+            name: "all-daily".to_string(),
+            schedule: "daily 00:00".to_string(),
+            next_run: None,
+            status: None,
+            timer_active: true,
+        };
+
+        use ratatui::{Terminal, backend::TestBackend, widgets::Wrap};
+        let mut terminal = Terminal::new(TestBackend::new(40, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let paragraph = Paragraph::new(detail_lines(&profile, &row, None))
+                    .block(Block::bordered().title("detail"))
+                    .wrap(Wrap { trim: true });
+                frame.render_widget(paragraph, area);
+            })
+            .unwrap();
+
+        let rows = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(40)
+            .map(|cells| cells.iter().map(|c| c.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+
+        let visible = rows.join("\n");
+        for token in [
+            "timer active",
+            "daily 00:00",
+            "am",
+            "android_studio",
+            "antigravity",
+            "app_man",
+            "aqua",
+            "asdf",
+        ] {
+            assert!(
+                rows.iter().any(|row| row.contains(token)),
+                "token {token:?} is split across rows by the dashboard.tape wrap\n{visible}"
+            );
+        }
+        let marker = rows
+            .iter()
+            .position(|row| row.contains("… and"))
+            .unwrap_or(0);
+        assert!(
+            rows[marker..].iter().any(|row| row.contains("more")),
+            "truncation suffix '… and N more' is truncated by the dashboard.tape wrap\n{visible}"
+        );
+    }
 }

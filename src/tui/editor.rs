@@ -106,10 +106,12 @@ pub struct EditorState {
     pub typed_digits: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum EditorEvent {
     None,
     Cancel,
     RequestSave,
+    Quit,
 }
 
 impl EditorState {
@@ -232,6 +234,9 @@ impl EditorState {
         if key.code == KeyCode::Esc {
             return EditorEvent::Cancel;
         }
+        if matches!(key.code, KeyCode::Char('q' | 'Q')) && !self.text_entry_focused() {
+            return EditorEvent::Quit;
+        }
         if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::BackTab {
             self.section = prev_section(self.section);
             self.reset_indices();
@@ -258,6 +263,16 @@ impl EditorState {
         self.schedule_index = 0;
         self.option_index = 0;
         self.action_index = 0;
+    }
+
+    fn text_entry_focused(&self) -> bool {
+        match self.section {
+            Section::Name => self.creating,
+            Section::Steps => true,
+            Section::Repos => self.repo_index <= 2,
+            Section::Schedule => self.custom_row_selected(),
+            Section::Options | Section::Actions => false,
+        }
     }
 
     fn handle_name_key(&mut self, key: KeyEvent) -> EditorEvent {
@@ -878,6 +893,39 @@ mod tests {
             SchedulePreset::Daily { hour, .. } => assert_eq!(*hour, 23),
             other => panic!("unexpected preset {other:?}"),
         }
+    }
+
+    #[test]
+    fn quit_works_outside_text_entry_and_types_inside_it() {
+        let mut editor = new_editor();
+        editor.section = Section::Actions;
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Char('q'))),
+            EditorEvent::Quit
+        );
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Char('Q'))),
+            EditorEvent::Quit
+        );
+
+        editor.section = Section::Steps;
+        editor.filter = LineEdit::new(String::new());
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Char('q'))),
+            EditorEvent::None
+        );
+        assert_eq!(editor.filter.value, "q");
+
+        editor.section = Section::Schedule;
+        editor.schedule.preset = SchedulePreset::Custom {
+            calendar: String::new(),
+        };
+        editor.schedule_index = 1;
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Char('q'))),
+            EditorEvent::None
+        );
+        assert_eq!(editor.custom.value, "q");
     }
 
     #[test]

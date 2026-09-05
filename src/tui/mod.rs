@@ -231,9 +231,19 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        if key.code == KeyCode::Char('Q') {
-            self.should_quit = true;
-            return;
+        let quits = matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'));
+        if quits {
+            match &self.view {
+                View::Dashboard | View::Help | View::Confirm { .. } => {
+                    self.should_quit = true;
+                    return;
+                }
+                View::Logs(_) => {
+                    self.should_quit = true;
+                    return;
+                }
+                View::Editor(_) => {}
+            }
         }
         match std::mem::replace(&mut self.view, View::Dashboard) {
             View::Dashboard => self.handle_dashboard_key(key),
@@ -242,6 +252,7 @@ impl App {
                     self.message.clear();
                 }
                 editor::EditorEvent::RequestSave => self.save_profile(*state),
+                editor::EditorEvent::Quit => self.should_quit = true,
                 editor::EditorEvent::None => self.view = View::Editor(state),
             },
             View::Logs(mut state) => {
@@ -265,39 +276,44 @@ impl App {
             return;
         }
         match key.code {
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Char('j' | 'J') | KeyCode::Down => {
                 if self.selected + 1 < self.visible_rows().len() {
                     self.selected += 1;
                 }
             }
-            KeyCode::Char('k') | KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-            KeyCode::Char('/') => self.filter_editing = true,
+            KeyCode::Char('k' | 'K') | KeyCode::Up => {
+                self.selected = self.selected.saturating_sub(1);
+            }
+            KeyCode::Enter => self.open_editor_for_selected(),
             KeyCode::Esc => {
                 if self.filtering() {
                     self.filter = LineEdit::new(String::new());
                     self.selected = 0;
                 }
             }
-            KeyCode::Char('?') => self.view = View::Help,
-            KeyCode::Char('n') => {
-                self.view = View::Editor(Box::new(editor::EditorState::new(
-                    None,
-                    self.catalog.clone(),
-                )));
-            }
-            KeyCode::Char('e') | KeyCode::Enter => self.open_editor_for_selected(),
-            KeyCode::Char(' ') => self.toggle_enabled(),
-            KeyCode::Char('d') => {
-                if let Some(name) = self.selected_row().map(|row| row.name.clone()) {
-                    self.view = View::Confirm { profile: name };
+            KeyCode::Char(c) => match c.to_ascii_lowercase() {
+                '/' => self.filter_editing = true,
+                '?' => self.view = View::Help,
+                'n' => {
+                    self.view = View::Editor(Box::new(editor::EditorState::new(
+                        None,
+                        self.catalog.clone(),
+                    )));
                 }
-            }
-            KeyCode::Char('r') => self.run_now(),
-            KeyCode::Char('t') => self.dry_run_selected(),
-            KeyCode::Char('l') => self.open_logs(),
-            KeyCode::Char('L') => self.enable_linger(),
-            KeyCode::Char('R') => self.resync(),
+                'e' => self.open_editor_for_selected(),
+                ' ' => self.toggle_enabled(),
+                'd' => {
+                    if let Some(name) = self.selected_row().map(|row| row.name.clone()) {
+                        self.view = View::Confirm { profile: name };
+                    }
+                }
+                'r' => self.run_now(),
+                't' => self.dry_run_selected(),
+                'l' => self.open_logs(),
+                'g' => self.enable_linger(),
+                's' => self.resync(),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -573,14 +589,14 @@ impl App {
         } else {
             match &self.view {
                 View::Dashboard => {
-                    "/ filter  n new  e edit  space pause  d delete  r run  t test  l logs  L linger  R resync  ? help  Q quit"
+                    "/ filter  n new  e edit  space pause  d delete  r run  t test  l logs  g linger  s resync  ? help  q quit"
                 }
                 View::Editor(_) => {
-                    "Tab section  space toggle  ←→ adjust  type numbers  Esc cancel  Q quit"
+                    "tab section  space toggle  ←→ adjust  type numbers  esc cancel  q quit"
                 }
-                View::Logs(_) => "Enter open  h back  r refresh  Esc back  Q quit",
-                View::Help => "any key closes  Q quit",
-                View::Confirm { .. } => "y confirm delete  other key cancels  Q quit",
+                View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
+                View::Help => "any key closes  q quit",
+                View::Confirm { .. } => "y confirm delete  esc cancels  q quit",
             }
         };
         let prefix = if self.filter_editing {

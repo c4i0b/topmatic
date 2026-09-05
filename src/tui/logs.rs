@@ -47,8 +47,8 @@ impl LogsState {
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => return true,
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Esc | KeyCode::Char('h' | 'H') => return true,
+            KeyCode::Up | KeyCode::Char('k' | 'K') => {
                 if self.content.is_some() {
                     self.scroll = self.scroll.saturating_sub(1);
                 } else {
@@ -56,7 +56,7 @@ impl LogsState {
                     self.load_selected();
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down | KeyCode::Char('j' | 'J') => {
                 if self.content.is_some() {
                     self.scroll = self.scroll.saturating_add(1);
                 } else if self.selected + 1 < self.entries.len() {
@@ -69,10 +69,10 @@ impl LogsState {
                     self.load_selected();
                 }
             }
-            KeyCode::Backspace | KeyCode::Char('h') => {
+            KeyCode::Backspace => {
                 self.content = None;
             }
-            KeyCode::Char('r') => {
+            KeyCode::Char('r' | 'R') => {
                 let paths = Paths::from_env();
                 self.reload(&paths);
             }

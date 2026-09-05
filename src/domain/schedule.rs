@@ -86,7 +86,7 @@ impl SchedulePreset {
     }
 }
 
-pub const SPREAD_DELAY_SEC: u64 = 43_200;
+pub const SPREAD_DELAY_SEC: u64 = 1_800;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Schedule {
@@ -204,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn default_schedule_spreads_over_the_whole_day() {
+    fn default_schedule_is_daily_with_a_small_jitter() {
         let schedule = Schedule::default();
         assert_eq!(
             schedule.preset,
@@ -213,13 +213,13 @@ mod tests {
             }
         );
         assert_eq!(schedule.preset.on_calendar(), "daily");
-        assert_eq!(schedule.randomized_delay_sec, 43_200);
+        assert_eq!(schedule.randomized_delay_sec, 1_800);
     }
 
     #[test]
     fn spread_summaries_mention_window_and_delay() {
         let schedule = Schedule::default();
-        assert_eq!(schedule.summary(), "daily spread (≤12h)");
+        assert_eq!(schedule.summary(), "daily spread (≤30min)");
     }
 
     #[test]

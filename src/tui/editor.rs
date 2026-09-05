@@ -9,6 +9,28 @@ use crate::systemd::validate_on_calendar;
 
 use super::input::LineEdit;
 
+pub const STEPS_VISIBLE: usize = 10;
+pub const REPOS_VISIBLE: usize = 6;
+
+pub fn window_bounds(
+    index: usize,
+    len: usize,
+    height: usize,
+    scroll: &mut usize,
+) -> (usize, usize) {
+    if height == 0 {
+        return (0, 0);
+    }
+    if index < *scroll {
+        *scroll = index;
+    } else if index >= *scroll + height {
+        *scroll = index + 1 - height;
+    }
+    *scroll = (*scroll).min(len.saturating_sub(height));
+    let end = (*scroll + height).min(len);
+    (*scroll, end)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Name,
@@ -85,6 +107,9 @@ pub struct EditorState {
     pub creating: bool,
     pub name: LineEdit,
     pub filter: LineEdit,
+    pub steps_filtering: bool,
+    pub steps_scroll: usize,
+    pub repo_scroll: usize,
     pub custom: LineEdit,
     pub catalog: Vec<StepEntry>,
     pub selected_steps: BTreeSet<String>,
@@ -121,6 +146,9 @@ impl EditorState {
                 creating: false,
                 name: LineEdit::new(profile.name.clone()),
                 filter: LineEdit::new(String::new()),
+                steps_filtering: false,
+                steps_scroll: 0,
+                repo_scroll: 0,
                 custom: LineEdit::new(
                     if let SchedulePreset::Custom { calendar } = &profile.schedule.preset {
                         calendar.clone()
@@ -151,6 +179,9 @@ impl EditorState {
                 creating: true,
                 name: LineEdit::new(String::new()),
                 filter: LineEdit::new(String::new()),
+                steps_filtering: false,
+                steps_scroll: 0,
+                repo_scroll: 0,
                 custom: LineEdit::new(String::new()),
                 catalog,
                 selected_steps: BTreeSet::new(),
@@ -183,6 +214,16 @@ impl EditorState {
             .collect();
         entries.sort_by_key(|entry| std::cmp::Reverse(entry.category.is_some()));
         entries
+    }
+
+    pub fn steps_window(&self) -> (usize, usize) {
+        let mut scroll = self.steps_scroll;
+        window_bounds(
+            self.list_index,
+            self.filtered_steps().len(),
+            STEPS_VISIBLE,
+            &mut scroll,
+        )
     }
 
     pub fn to_profile(&self) -> Result<Profile, String> {
@@ -231,7 +272,7 @@ impl EditorState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> EditorEvent {
-        if key.code == KeyCode::Esc {
+        if key.code == KeyCode::Esc && !(self.section == Section::Steps && self.steps_filtering) {
             return EditorEvent::Cancel;
         }
         if matches!(key.code, KeyCode::Char('q' | 'Q')) && !self.text_entry_focused() {
@@ -268,7 +309,7 @@ impl EditorState {
     fn text_entry_focused(&self) -> bool {
         match self.section {
             Section::Name => self.creating,
-            Section::Steps => true,
+            Section::Steps => self.steps_filtering,
             Section::Repos => self.repo_index <= 2,
             Section::Schedule => self.custom_row_selected(),
             Section::Options | Section::Actions => false,
@@ -283,36 +324,68 @@ impl EditorState {
     }
 
     fn handle_steps_key(&mut self, key: KeyEvent) -> EditorEvent {
+        if self.steps_filtering {
+            match key.code {
+                KeyCode::Enter => self.steps_filtering = false,
+                KeyCode::Esc => {
+                    self.steps_filtering = false;
+                    self.filter = LineEdit::new(String::new());
+                    self.list_index = 0;
+                    self.steps_scroll = 0;
+                }
+                KeyCode::Up => self.move_steps_selection(-1),
+                KeyCode::Down => self.move_steps_selection(1),
+                _ => {
+                    self.filter.handle_key(key);
+                    self.list_index = 0;
+                    self.steps_scroll = 0;
+                }
+            }
+            return EditorEvent::None;
+        }
         match key.code {
-            KeyCode::Up => self.list_index = self.list_index.saturating_sub(1),
-            KeyCode::Down => {
-                let len = self.filtered_steps().len();
-                if self.list_index + 1 < len {
-                    self.list_index += 1;
-                }
-            }
-            KeyCode::Char(' ') => {
-                if let Some(entry) = self.filtered_steps().get(self.list_index) {
-                    let id = entry.id.clone();
-                    if self.selected_steps.contains(&id) {
-                        self.selected_steps.remove(&id);
-                    } else {
-                        self.selected_steps.insert(id);
-                    }
-                }
-            }
-            _ => self.filter.handle_key(key),
+            KeyCode::Up | KeyCode::Char('k' | 'K') => self.move_steps_selection(-1),
+            KeyCode::Down | KeyCode::Char('j' | 'J') => self.move_steps_selection(1),
+            KeyCode::Char('/') => self.steps_filtering = true,
+            KeyCode::Char(' ') => self.toggle_step_at(self.list_index),
+            _ => {}
         }
         EditorEvent::None
+    }
+
+    fn move_steps_selection(&mut self, delta: i64) {
+        let len = self.filtered_steps().len();
+        if len == 0 {
+            return;
+        }
+        let next = (self.list_index as i64 + delta).clamp(0, len as i64 - 1) as usize;
+        self.list_index = next;
+        let (start, _) = window_bounds(self.list_index, len, STEPS_VISIBLE, &mut self.steps_scroll);
+        self.steps_scroll = start;
+    }
+
+    fn toggle_step_at(&mut self, index: usize) {
+        if let Some(entry) = self.filtered_steps().get(index) {
+            let id = entry.id.clone();
+            if self.selected_steps.contains(&id) {
+                self.selected_steps.remove(&id);
+            } else {
+                self.selected_steps.insert(id);
+            }
+        }
     }
 
     fn handle_repos_key(&mut self, key: KeyEvent) -> EditorEvent {
         let rows = 3 + self.repos.len();
         match key.code {
-            KeyCode::Up => self.repo_index = self.repo_index.saturating_sub(1),
+            KeyCode::Up => {
+                self.repo_index = self.repo_index.saturating_sub(1);
+                self.sync_repo_scroll();
+            }
             KeyCode::Down => {
                 if self.repo_index + 1 < rows {
                     self.repo_index += 1;
+                    self.sync_repo_scroll();
                 }
             }
             KeyCode::Enter => match self.repo_index {
@@ -322,13 +395,15 @@ impl EditorState {
                     let _ = index;
                 }
             },
-            KeyCode::Char('d') if self.repo_index >= 3 => {
+            KeyCode::Char('d' | 'D') if self.repo_index >= 3 => {
                 self.repos.remove(self.repo_index - 3);
                 self.repo_index = self.repo_index.saturating_sub(1).max(2);
+                self.sync_repo_scroll();
             }
             KeyCode::Backspace if self.repo_index >= 3 => {
                 self.repos.remove(self.repo_index - 3);
                 self.repo_index = self.repo_index.saturating_sub(1).max(2);
+                self.sync_repo_scroll();
             }
             _ => match self.repo_index {
                 0 => self.repo_path.handle_key(key),
@@ -338,6 +413,21 @@ impl EditorState {
             },
         }
         EditorEvent::None
+    }
+
+    fn sync_repo_scroll(&mut self) {
+        if self.repos.is_empty() || self.repo_index < 3 {
+            self.repo_scroll = 0;
+            return;
+        }
+        let entry_index = self.repo_index - 3;
+        let (start, _) = window_bounds(
+            entry_index,
+            self.repos.len(),
+            REPOS_VISIBLE,
+            &mut self.repo_scroll,
+        );
+        self.repo_scroll = start;
     }
 
     fn add_repo_from_inputs(&mut self) {
@@ -909,7 +999,13 @@ mod tests {
         );
 
         editor.section = Section::Steps;
-        editor.filter = LineEdit::new(String::new());
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Char('q'))),
+            EditorEvent::Quit,
+            "q quits while browsing steps (filter is opt-in)"
+        );
+        editor.handle_key(key(KeyCode::Char('/')));
+        assert!(editor.steps_filtering);
         assert_eq!(
             editor.handle_key(key(KeyCode::Char('q'))),
             EditorEvent::None
@@ -926,6 +1022,78 @@ mod tests {
             EditorEvent::None
         );
         assert_eq!(editor.custom.value, "q");
+    }
+
+    #[test]
+    fn steps_filter_is_opt_in_and_esc_clears() {
+        let mut editor = new_editor();
+        editor.section = Section::Steps;
+
+        editor.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(
+            editor.filter.value, "",
+            "chars must not leak into the filter"
+        );
+
+        editor.handle_key(key(KeyCode::Char('/')));
+        editor.handle_key(key(KeyCode::Char('c')));
+        editor.handle_key(key(KeyCode::Char('a')));
+        assert_eq!(editor.filter.value, "ca");
+        assert!(editor.steps_filtering);
+
+        editor.handle_key(key(KeyCode::Enter));
+        assert!(!editor.steps_filtering);
+        assert_eq!(editor.filter.value, "ca", "Enter keeps the filter applied");
+
+        editor.handle_key(key(KeyCode::Char('/')));
+        editor.handle_key(key(KeyCode::Esc));
+        assert!(!editor.steps_filtering);
+        assert_eq!(editor.filter.value, "", "Esc clears the filter");
+    }
+
+    #[test]
+    fn steps_selection_scrolls_beyond_the_visible_window() {
+        let mut editor = new_editor();
+        editor.section = Section::Steps;
+        let total = editor.filtered_steps().len();
+        assert!(total > STEPS_VISIBLE, "catalog must exceed the window");
+
+        for _ in 0..total + 5 {
+            editor.handle_key(key(KeyCode::Down));
+        }
+        assert_eq!(editor.list_index, total - 1, "selection clamps at the end");
+        let (start, end) = editor.steps_window();
+        assert!(editor.list_index >= start && editor.list_index < end);
+
+        for _ in 0..total + 5 {
+            editor.handle_key(key(KeyCode::Up));
+        }
+        assert_eq!(editor.list_index, 0);
+        assert_eq!(editor.steps_scroll, 0);
+    }
+
+    #[test]
+    fn j_and_k_navigate_steps_without_the_filter() {
+        let mut editor = new_editor();
+        editor.section = Section::Steps;
+        editor.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(editor.list_index, 1);
+        editor.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(editor.list_index, 0);
+    }
+
+    #[test]
+    fn window_bounds_follow_the_selection() {
+        let mut scroll = 0usize;
+        assert_eq!(window_bounds(0, 100, 10, &mut scroll), (0, 10));
+        assert_eq!(window_bounds(9, 100, 10, &mut scroll), (0, 10));
+        assert_eq!(window_bounds(10, 100, 10, &mut scroll), (1, 11));
+        assert_eq!(window_bounds(99, 100, 10, &mut scroll), (90, 100));
+        assert_eq!(window_bounds(0, 100, 10, &mut scroll), (0, 10));
+        let mut tiny = 5usize;
+        assert_eq!(window_bounds(3, 4, 10, &mut tiny), (0, 4));
+        let mut zero = 0usize;
+        assert_eq!(window_bounds(2, 8, 0, &mut zero), (0, 0));
     }
 
     #[test]

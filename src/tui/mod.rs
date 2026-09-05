@@ -631,17 +631,41 @@ impl App {
             ),
         ]);
 
+        let steps_total = state.filtered_steps().len();
+        let mut steps_scroll = state.steps_scroll;
+        let (steps_start, steps_end) = editor::window_bounds(
+            state.list_index,
+            steps_total,
+            editor::STEPS_VISIBLE,
+            &mut steps_scroll,
+        );
+        let filter_label = if state.steps_filtering {
+            format!("filter: {} ", state.filter.value)
+        } else {
+            "/ filter ".to_string()
+        };
         let mut steps_lines = vec![Line::from(vec![
             focus_marker(state.section == editor::Section::Steps),
             Span::raw(format!(
-                " steps ({}/{} shown, selected: {}): filter: ",
-                state.filtered_steps().len(),
-                state.catalog.len(),
-                state.selected_steps.len()
+                " steps (selected: {}) [{}-{}/{}] {}",
+                state.selected_steps.len(),
+                if steps_total == 0 { 0 } else { steps_start + 1 },
+                steps_end,
+                steps_total,
+                filter_label
             )),
-            Span::styled(state.filter.value.clone(), Style::new().fg(Color::Cyan)),
         ])];
-        for (index, entry) in state.filtered_steps().iter().take(10).enumerate() {
+        if state.steps_filtering {
+            steps_lines.push(Line::from(Span::styled(
+                format!("  {}▏", state.filter.value),
+                Style::new().fg(Color::Cyan),
+            )));
+        }
+        for (offset, entry) in state.filtered_steps()[steps_start..steps_end]
+            .iter()
+            .enumerate()
+        {
+            let index = steps_start + offset;
             let marker = if state.selected_steps.contains(&entry.id) {
                 "[x]"
             } else {
@@ -687,8 +711,15 @@ impl App {
             Span::raw("  scan dir + Enter: "),
             Span::styled(state.repo_scan.value.clone(), Style::new().fg(Color::Cyan)),
         ]));
-        for (index, repo) in state.repos.iter().take(6).enumerate() {
-            let row = 3 + index;
+        let mut repo_scroll = state.repo_scroll;
+        let (repo_start, repo_end) = editor::window_bounds(
+            state.repo_index.saturating_sub(3),
+            state.repos.len(),
+            editor::REPOS_VISIBLE,
+            &mut repo_scroll,
+        );
+        for (offset, repo) in state.repos[repo_start..repo_end].iter().enumerate() {
+            let row = 3 + repo_start + offset;
             steps_lines.push(Line::from(vec![
                 Span::raw(if focus_repos && state.repo_index == row {
                     "▶ "

@@ -12,7 +12,7 @@ Flatpaks, cargo installs, npm globals, pipx apps… [topgrade](https://github.co
 - Your own topgrade config stays untouched — topmatic always runs topgrade with an isolated config
 - Machines are off sometimes: timers are persistent and catch up missed runs
 - Jobs run at minimum priority (`Nice=19`, batch CPU, idle IO) — never in your way
-- Default schedule spreads runs over the day (randomized), so nothing hammers mirrors at a privileged hour
+- Default schedule follows the common Linux convention: daily anchor with a small random jitter (≤30min), so nothing hammers mirrors at the same second
 - Self-healing: every start rewrites drifted unit files, removes orphan timers and prunes stray schedule overrides; `topmatic doctor` diagnoses and `topmatic reset` starts clean
 
 ## Requirements

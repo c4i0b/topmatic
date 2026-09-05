@@ -201,7 +201,9 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
         }
         None => vec![Line::from("no profile selected")],
     };
-    let paragraph = Paragraph::new(detail).block(Block::bordered().title("detail"));
+    let paragraph = Paragraph::new(detail)
+        .block(Block::bordered().title("detail"))
+        .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(paragraph, detail_area);
 
     PaneAreas { list: list_area }

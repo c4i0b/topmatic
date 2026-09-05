@@ -94,17 +94,20 @@ TUI + CLI that schedules user-level updates via topgrade as backend. No sudo any
 
 - **Container = portable quality gate only**: `make check` (fmt/clippy/tests) runs green inside `topmatic-dev` because tests use stubs and never touch systemd/topgrade/notify-send.
 - **Host = integration environment**: anything involving `topmatic sync`, timers, the TUI against real units, or real topgrade runs must happen on the host. Never try to "fix" the container to fake this.
-- CLI gate without VS Code (docker is podman here; `--userns=keep-id` keeps file ownership on uid 1000):
-  `podman run --rm --userns=keep-id -v "$PWD:/workspace" -w /workspace topmatic-dev make check`
-- Rebuild after Dockerfile changes: `podman build -t topmatic-dev .devcontainer/`
+- CLI gate without VS Code (docker is podman here; `--userns=keep-id` keeps file ownership on uid 1000): `just container-gate`. It always rebuilds the image first (fast with layer cache) and persists the cargo deps cache in the `topmatic-cargo` named volume over `/usr/local/cargo` (CARGO_HOME; world-writable in the image, toolchain lives separately in RUSTUP_HOME). `just shell` drops into the same environment interactively.
 - VS Code / devcontainer CLI uses `.devcontainer/devcontainer.json` directly (same image).
 - Gotcha fixed once: beads' install script must run as the `vscode` user (installs to `/home/vscode/.local/bin`); running it as root silently breaks the `/usr/local/bin/bd` symlink.
 
 ### Commands
 
-- `make check` — full gate: `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test`. Run before every commit.
-- `cargo test <name>` — single test; integration tests live in `tests/runner_integration.rs`.
-- `cargo build --release && install -m 755 target/release/topmatic ~/.cargo/bin/topmatic` — deploy to where the systemd unit's `ExecStart` points.
+Task runner is **just** (`justfile`, replaces Makefile). `just` lives in `~/.local/bin` on the host and inside the devcontainer image.
+
+- `just check` — full gate: `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test`. Run before every commit.
+- `just one <name>` — single test; integration tests live in `tests/runner_integration.rs`.
+- `just deploy` — release build + install to `~/.cargo/bin/topmatic` (where the systemd unit's `ExecStart` points).
+- `just fixture` — regenerate `tests/fixtures/topgrade_help.txt` from the installed topgrade.
+- `just image` / `just container-gate` — build devcontainer image / run the gate inside it.
+- `just verify <profile>` — host-side dry-run of a profile.
 - CLI surface for manual checks: `topmatic sync | list | edit | run <profile> [--dry-run]`.
 
 **Pipeline gotcha**: `cargo test | tail` swallows the exit code and lets `&&` chains continue on red. Use `set -o pipefail` or grep the summary (`test result:`), never bare pipes into `&&`.

@@ -41,9 +41,17 @@ fixture:
 image:
     podman build -t topmatic-dev .devcontainer/
 
-# Quality gate inside the devcontainer image
-container-gate:
-    podman run --rm --userns=keep-id -v "$PWD:/workspace" -w /workspace topmatic-dev just check
+# Interactive shell inside the devcontainer (volume mounts mirror container-gate)
+shell: image
+    podman run --rm -it --userns=keep-id \
+        -v topmatic-cargo:/usr/local/cargo \
+        -v "$PWD:/workspace" -w /workspace topmatic-dev
+
+# Quality gate inside the devcontainer image (deps cache persists in topmatic-cargo volume)
+container-gate: image
+    podman run --rm --userns=keep-id \
+        -v topmatic-cargo:/usr/local/cargo \
+        -v "$PWD:/workspace" -w /workspace topmatic-dev just check
 
 # Host-side dry-run verification of a profile
 verify profile:

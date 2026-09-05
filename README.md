@@ -66,7 +66,7 @@ just check          # fmt + clippy + tests
 just container-gate # same gate inside the devcontainer image
 ```
 
-Tests run anywhere (stubs instead of real topgrade/systemd). Task runner is [just](https://github.com/casey/just); `just --list` shows everything, including how to regenerate the screenshots from `docs/assets/*.tape` with [vhs](https://github.com/charmbracelet/vhs).
+Tests run anywhere (stubs instead of real topgrade/systemd). Task runner is [just](https://github.com/casey/just); `just --list` shows everything, including `just screenshots` to regenerate the README images from `docs/assets/*.tape` with [vhs](https://github.com/charmbracelet/vhs).
 
 ## License
 

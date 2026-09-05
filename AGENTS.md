@@ -96,6 +96,7 @@ User-level update scheduler on top of topgrade, no sudo. topgrade always runs wi
 
 - Edition 2024: env mutation is unsafe in tests — use `Paths::with_bases`, never `set_var`
 - Pipes swallow cargo exit codes — `set -o pipefail` before `&&` chains
-- `flatpak-daily` on this host is the user's production timer — never delete/disable without asking
+- Production timers on this host are `topmatic@all-daily` and `topmatic@dev-daily` — never delete/disable without asking
+- Orphan cleanup only removes `topmatic@*` timers that carry topmatic's schedule drop-in (`topmatic@<p>.timer.d/10-schedule.conf`); anything else named `topmatic@*` is foreign (other tools) and must be left untouched, only reported
 - `topmatic sync`/TUI touch the real user systemd manager; dry-run first when verifying
-- Screenshots: regenerate from `docs/assets/*.tape` with vhs (last frame via ffmpeg; vhs PNG `Output` is unreliable)
+- Screenshots: `just screenshots` regenerates them from `docs/assets/*.tape` via the `topmatic-shots` distrobox (vhs + ffmpeg; vhs PNG `Output` is unreliable)

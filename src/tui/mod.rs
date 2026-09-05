@@ -231,6 +231,10 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char('Q') {
+            self.should_quit = true;
+            return;
+        }
         match std::mem::replace(&mut self.view, View::Dashboard) {
             View::Dashboard => self.handle_dashboard_key(key),
             View::Editor(mut state) => match state.handle_key(key) {
@@ -569,14 +573,14 @@ impl App {
         } else {
             match &self.view {
                 View::Dashboard => {
-                    "/ filter  n new  e edit  space pause  d delete  r run  t test  l logs  L linger  R resync  ? help  q quit"
+                    "/ filter  n new  e edit  space pause  d delete  r run  t test  l logs  L linger  R resync  ? help  Q quit"
                 }
                 View::Editor(_) => {
-                    "Tab next section  space toggle  ←→ adjust  type numbers for time  Esc cancel"
+                    "Tab section  space toggle  ←→ adjust  type numbers  Esc cancel  Q quit"
                 }
-                View::Logs(_) => "Enter open  h back  r refresh  Esc back",
-                View::Help => "any key closes",
-                View::Confirm { .. } => "y confirm delete  other key cancels",
+                View::Logs(_) => "Enter open  h back  r refresh  Esc back  Q quit",
+                View::Help => "any key closes  Q quit",
+                View::Confirm { .. } => "y confirm delete  other key cancels  Q quit",
             }
         };
         let prefix = if self.filter_editing {

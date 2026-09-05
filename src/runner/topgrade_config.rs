@@ -11,16 +11,7 @@ pub fn render() -> String {
 }
 
 pub fn write_if_changed(path: &std::path::Path) -> std::io::Result<()> {
-    let content = render();
-    if let Ok(existing) = std::fs::read_to_string(path)
-        && existing == content
-    {
-        return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, content)
+    crate::util::write_file_if_changed(path, &render()).map(|_| ())
 }
 
 #[cfg(test)]

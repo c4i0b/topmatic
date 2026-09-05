@@ -41,6 +41,7 @@ pub fn service_unit(topmatic_bin: &Path, scope: Scope) -> String {
     format!(
         "[Unit]\n\
          Description=topmatic run for profile %i\n\
+         ConditionACPower=true\n\
          \n\
          [Service]\n\
          Type=oneshot\n\
@@ -48,7 +49,8 @@ pub fn service_unit(topmatic_bin: &Path, scope: Scope) -> String {
          Environment=PATH={path_env}\n\
          Nice=19\n\
          CPUSchedulingPolicy=batch\n\
-         IOSchedulingClass=idle\n",
+         IOSchedulingClass=idle\n\
+         TimeoutStartSec=30min\n",
         topmatic_bin.display()
     )
 }
@@ -128,6 +130,8 @@ mod tests {
         assert!(unit.contains("Nice=19"));
         assert!(unit.contains("CPUSchedulingPolicy=batch"));
         assert!(unit.contains("IOSchedulingClass=idle"));
+        assert!(unit.contains("TimeoutStartSec=30min"));
+        assert!(unit.contains("ConditionACPower=true"));
     }
 
     #[test]

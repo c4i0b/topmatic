@@ -72,8 +72,16 @@ topmatic run <profile> --dry-run
 
 ## Development
 
+Task runner is [just](https://github.com/casey/just) (`justfile`):
+
 ```sh
-make check    # cargo fmt --check + clippy -D warnings + test
+just            # list recipes
+just check      # full gate: fmt --check + clippy -D warnings + test
+just one <name> # single test
+just deploy     # release build + install to ~/.cargo/bin
+just image && just container-gate   # gate inside the devcontainer image
+just verify <profile>               # host-side dry-run
+just fixture    # regenerate tests/fixtures/topgrade_help.txt
 ```
 
 - Devcontainer included (`.devcontainer/`, Rust + beads).

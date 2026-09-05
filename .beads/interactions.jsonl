@@ -1,0 +1,2 @@
+{"id":"int-5f9cc1b0323502efe970033248e4f3e8","kind":"field_change","created_at":"2026-09-05T18:35:48.857791753Z","actor":"Caio","issue_id":"topmatic-bnb.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Done: cargo+toolchain+Makefile+devcontainer+beads board"}}
+{"id":"int-223a928f171bf3aaff8b2a214965a0ae","kind":"field_change","created_at":"2026-09-05T18:35:49.061694272Z","actor":"Caio","issue_id":"topmatic-bnb","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"M1 complete"}}

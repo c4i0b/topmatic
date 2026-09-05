@@ -618,6 +618,12 @@ impl App {
             Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .areas(area);
 
+        let inner_height = left.height.saturating_sub(2) as usize;
+        let repos_block = 4 + state.repos.len().min(editor::REPOS_VISIBLE);
+        let steps_height = inner_height
+            .saturating_sub(2 + repos_block + usize::from(state.steps_filtering))
+            .max(1);
+
         let name_line = Line::from(vec![
             focus_marker(state.section == editor::Section::Name),
             Span::raw(" name: "),
@@ -636,7 +642,7 @@ impl App {
         let (steps_start, steps_end) = editor::window_bounds(
             state.list_index,
             steps_total,
-            editor::STEPS_VISIBLE,
+            steps_height,
             &mut steps_scroll,
         );
         let filter_label = if state.steps_filtering {

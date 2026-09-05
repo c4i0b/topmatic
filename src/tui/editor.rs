@@ -194,7 +194,7 @@ impl EditorState {
                 cleanup: true,
                 notify: NotifyPolicy::OnFailure,
                 enabled: true,
-                section: Section::Name,
+                section: Section::Steps,
                 list_index: 0,
                 repo_index: 0,
                 schedule_index: 0,
@@ -318,7 +318,12 @@ impl EditorState {
 
     fn handle_name_key(&mut self, key: KeyEvent) -> EditorEvent {
         if self.creating {
-            self.name.handle_key(key);
+            if key.code == KeyCode::Enter {
+                self.section = Section::Steps;
+                self.reset_indices();
+            } else {
+                self.name.handle_key(key);
+            }
         }
         EditorEvent::None
     }
@@ -1079,6 +1084,28 @@ mod tests {
         editor.handle_key(key(KeyCode::Char('j')));
         assert_eq!(editor.list_index, 1);
         editor.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(editor.list_index, 0);
+    }
+
+    #[test]
+    fn creating_a_profile_lands_on_the_steps_picker() {
+        let editor = new_editor();
+        assert_eq!(editor.section, Section::Steps);
+
+        let mut editor = new_editor();
+        editor.name = LineEdit::new("dev-daily");
+        editor.handle_key(key(KeyCode::Enter));
+        assert_eq!(editor.section, Section::Steps);
+        assert_eq!(editor.name.value, "dev-daily");
+    }
+
+    #[test]
+    fn enter_in_the_name_field_moves_to_steps() {
+        let mut editor = new_editor();
+        editor.section = Section::Name;
+        editor.handle_key(key(KeyCode::Char('d')));
+        editor.handle_key(key(KeyCode::Enter));
+        assert_eq!(editor.section, Section::Steps);
         assert_eq!(editor.list_index, 0);
     }
 

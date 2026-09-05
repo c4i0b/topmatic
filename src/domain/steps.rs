@@ -48,6 +48,9 @@ pub fn parse_steps(help_text: &str) -> Vec<String> {
 
 pub fn catalog(help_text: &str) -> Vec<String> {
     parse_steps(help_text)
+        .into_iter()
+        .filter(|step| !is_privileged(step))
+        .collect()
 }
 
 pub fn is_privileged(step: &str) -> bool {
@@ -102,5 +105,14 @@ mod tests {
         assert!(is_privileged("firmware"));
         assert!(!is_privileged("flatpak"));
         assert!(!is_privileged("cargo"));
+    }
+
+    #[test]
+    fn catalog_hides_privileged_steps_from_selection() {
+        let steps = catalog(HELP);
+        assert!(!steps.iter().any(|s| is_privileged(s)));
+        assert!(!steps.contains(&"system".to_string()));
+        assert!(!steps.contains(&"firmware".to_string()));
+        assert!(steps.contains(&"flatpak".to_string()));
     }
 }

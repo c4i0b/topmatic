@@ -1,5 +1,3 @@
-use crate::domain::steps::is_privileged;
-
 pub struct Preset {
     pub label: &'static str,
     pub description: &'static str,
@@ -8,18 +6,18 @@ pub struct Preset {
 
 pub const PRESETS: &[Preset] = &[
     Preset {
-        label: "Everything user-level",
-        description: "all non-privileged steps from your installed topgrade",
-        suggested_name: "all-user-daily",
+        label: "All",
+        description: "every supported step",
+        suggested_name: "all-daily",
     },
     Preset {
         label: "Dev tools",
-        description: "runtimes, languages, editors and dev tooling",
+        description: "runtimes, editors and tooling",
         suggested_name: "dev-daily",
     },
     Preset {
         label: "Flatpak",
-        description: "Flatpak apps and runtimes, with auto-clean",
+        description: "apps and runtimes",
         suggested_name: "flatpak-daily",
     },
 ];
@@ -57,32 +55,196 @@ const DEV_TOOLS: &[&str] = &[
     "opencode",
 ];
 
+pub const ALL_STEPS: &[&str] = &[
+    "am",
+    "android_studio",
+    "antigravity",
+    "app_man",
+    "aqua",
+    "asdf",
+    "atom",
+    "atuin",
+    "auto_cpufreq",
+    "bin",
+    "bob",
+    "brew_cask",
+    "brew_formula",
+    "bun",
+    "bun_packages",
+    "cargo",
+    "certbot",
+    "chezmoi",
+    "chocolatey",
+    "choosenim",
+    "cinnamon_spices",
+    "clam_av_db",
+    "claude_code",
+    "claude_code_plugins",
+    "codex",
+    "colima",
+    "composer",
+    "conda",
+    "cursor",
+    "cursor_agent",
+    "custom_commands",
+    "deb_get",
+    "deno",
+    "dkp_pacman",
+    "dotnet",
+    "elan",
+    "emacs",
+    "falconf",
+    "flatpak",
+    "flutter",
+    "fossil",
+    "gcloud",
+    "gearlever",
+    "gem",
+    "getnf",
+    "ghcup",
+    "git_repos",
+    "github_cli_extensions",
+    "gnome_shell_extensions",
+    "go",
+    "guix",
+    "haxelib",
+    "helix",
+    "helix_db",
+    "helm",
+    "home_manager",
+    "hyprpm",
+    "install_release",
+    "jetbrains_aqua",
+    "jetbrains_clion",
+    "jetbrains_datagrip",
+    "jetbrains_dataspell",
+    "jetbrains_gateway",
+    "jetbrains_goland",
+    "jetbrains_idea",
+    "jetbrains_mps",
+    "jetbrains_phpstorm",
+    "jetbrains_pycharm",
+    "jetbrains_rider",
+    "jetbrains_rubymine",
+    "jetbrains_rustrover",
+    "jetbrains_toolbox",
+    "jetbrains_webstorm",
+    "jetpack",
+    "julia",
+    "juliaup",
+    "kakoune",
+    "krew",
+    "lensfun",
+    "lure",
+    "macports",
+    "mamba",
+    "mas",
+    "maza",
+    "micro",
+    "microsoft_office",
+    "microsoft_store",
+    "miktex",
+    "mise",
+    "myrepos",
+    "nix",
+    "nix_helper",
+    "node",
+    "ollama",
+    "opam",
+    "opencode",
+    "pacdef",
+    "pacstall",
+    "pearl",
+    "pi",
+    "pip3",
+    "pip_review",
+    "pip_review_local",
+    "pipupgrade",
+    "pipx",
+    "pipxu",
+    "pixi",
+    "pkg",
+    "pkgfile",
+    "pkgin",
+    "pkgit",
+    "platformio_core",
+    "pnpm",
+    "poetry",
+    "powershell",
+    "protonplus",
+    "protonup",
+    "pyenv",
+    "raco",
+    "rcm",
+    "remotes",
+    "rtcl",
+    "ruby_gems",
+    "rustup",
+    "rye",
+    "scoop",
+    "sdkman",
+    "sera",
+    "sheldon",
+    "shell",
+    "skills",
+    "soar",
+    "sparkle",
+    "spicetify",
+    "stack",
+    "stew",
+    "tldr",
+    "tlmgr",
+    "tmux",
+    "tpack",
+    "typst",
+    "uv",
+    "vagrant",
+    "vcpkg",
+    "vim",
+    "vite_plus",
+    "volta_packages",
+    "vscode",
+    "vscode_insiders",
+    "vscodium",
+    "vscodium_insiders",
+    "windsurf",
+    "winget",
+    "wsl",
+    "wsl_update",
+    "xcodes",
+    "yadm",
+    "yarn",
+    "yazi",
+    "zerobrew",
+    "zigup",
+    "zvm",
+];
+
+fn known(steps: &[&str], catalog: &[String]) -> Vec<String> {
+    steps
+        .iter()
+        .filter(|step| catalog.iter().any(|known| known == *step))
+        .map(|step| step.to_string())
+        .collect()
+}
+
 pub fn steps_for(index: usize, catalog: &[String]) -> Vec<String> {
     match index {
-        0 => catalog
-            .iter()
-            .filter(|step| !is_privileged(step))
-            .cloned()
-            .collect(),
-        1 => DEV_TOOLS
-            .iter()
-            .filter(|step| catalog.iter().any(|known| known == *step))
-            .map(|step| step.to_string())
-            .collect(),
+        0 => known(ALL_STEPS, catalog),
+        1 => known(DEV_TOOLS, catalog),
         2 => vec!["flatpak".to_string()],
         _ => Vec::new(),
     }
 }
 
 pub fn fallback_catalog() -> Vec<String> {
-    let mut steps: Vec<String> = DEV_TOOLS.iter().map(|s| s.to_string()).collect();
-    steps.push("flatpak".to_string());
-    steps
+    ALL_STEPS.iter().map(|s| s.to_string()).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::steps::is_privileged;
 
     const HELP: &str = include_str!("../../tests/fixtures/topgrade_help.txt");
 
@@ -96,15 +258,13 @@ mod tests {
     }
 
     #[test]
-    fn all_user_preset_covers_everything_non_privileged() {
-        let entries = catalog();
-        let steps = steps_for(0, &entries);
-        assert!(!steps.contains(&"system".to_string()));
-        assert!(steps.contains(&"flatpak".to_string()));
-        assert_eq!(
-            steps.len(),
-            entries.iter().filter(|s| !is_privileged(s)).count()
-        );
+    fn all_preset_is_an_explicit_list_without_privileged_steps() {
+        assert!(ALL_STEPS.len() > 150);
+        for step in ALL_STEPS {
+            assert!(!is_privileged(step), "{step} must not be in the all preset");
+        }
+        let catalog = catalog();
+        assert_eq!(steps_for(0, &catalog).len(), catalog.len());
     }
 
     #[test]
@@ -112,7 +272,6 @@ mod tests {
         let steps = steps_for(1, &catalog());
         assert!(steps.contains(&"cargo".to_string()));
         assert!(!steps.contains(&"flatpak".to_string()));
-        assert!(!steps.contains(&"winget".to_string()));
     }
 
     #[test]
@@ -127,5 +286,16 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), steps.len());
+    }
+
+    #[test]
+    fn preset_names_follow_description_frequency_format() {
+        for preset in PRESETS {
+            assert!(
+                preset.suggested_name.ends_with("-daily"),
+                "{}",
+                preset.suggested_name
+            );
+        }
     }
 }

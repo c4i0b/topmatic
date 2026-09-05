@@ -47,8 +47,6 @@ pub struct Profile {
     pub cleanup: bool,
     #[serde(default)]
     pub notify: NotifyPolicy,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
     #[serde(default)]
     pub scope: Scope,
 }
@@ -113,7 +111,6 @@ mod tests {
         assert_eq!(profile.name, "flatpak-daily");
         assert_eq!(profile.steps, vec!["flatpak"]);
         assert!(profile.cleanup);
-        assert!(profile.enabled);
         assert_eq!(profile.notify, NotifyPolicy::OnFailure);
         assert_eq!(profile.scope, Scope::User);
     }
@@ -128,11 +125,9 @@ mod tests {
 
     #[test]
     fn explicit_values_override_defaults() {
-        let text =
-            profile_toml("cleanup = false\nenabled = false\nnotify = 'always'\nscope = 'system'");
+        let text = profile_toml("cleanup = false\nnotify = 'always'\nscope = 'system'");
         let profile: Profile = toml::from_str(&text).unwrap();
         assert!(!profile.cleanup);
-        assert!(!profile.enabled);
         assert_eq!(profile.notify, NotifyPolicy::Always);
         assert_eq!(profile.scope, Scope::System);
     }

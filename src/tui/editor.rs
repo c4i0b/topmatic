@@ -112,7 +112,6 @@ pub struct EditorState {
     pub schedule: Schedule,
     pub cleanup: bool,
     pub notify: NotifyPolicy,
-    pub enabled: bool,
     pub section: Section,
     pub list_index: usize,
     pub schedule_index: usize,
@@ -151,7 +150,6 @@ impl EditorState {
                 schedule: profile.schedule.clone(),
                 cleanup: profile.cleanup,
                 notify: profile.notify,
-                enabled: profile.enabled,
                 section: Section::Steps,
                 list_index: 0,
                 schedule_index: 0,
@@ -172,7 +170,6 @@ impl EditorState {
                 schedule: Schedule::default(),
                 cleanup: true,
                 notify: NotifyPolicy::OnFailure,
-                enabled: true,
                 section: Section::Steps,
                 list_index: 0,
                 schedule_index: 0,
@@ -249,7 +246,6 @@ impl EditorState {
             },
             cleanup: self.cleanup,
             notify: self.notify,
-            enabled: self.enabled,
             scope: Scope::User,
         })
     }
@@ -564,23 +560,20 @@ impl EditorState {
     fn handle_options_key(&mut self, key: KeyEvent) -> EditorEvent {
         match key.code {
             KeyCode::Up => self.option_index = self.option_index.saturating_sub(1),
-            KeyCode::Down => self.option_index = (self.option_index + 1).min(2),
+            KeyCode::Down => self.option_index = (self.option_index + 1).min(1),
             KeyCode::Left | KeyCode::Right => {
                 let delta = if key.code == KeyCode::Left { 2 } else { 1 };
                 match self.option_index {
                     0 => self.cleanup = !self.cleanup,
-                    1 => {
+                    _ => {
                         let index = (self.notify.index() + delta) % 3;
                         self.notify = NotifyPolicy::from_index(index);
                     }
-                    _ => self.enabled = !self.enabled,
                 }
             }
-            KeyCode::Char(' ') => match self.option_index {
-                0 => self.cleanup = !self.cleanup,
-                2 => self.enabled = !self.enabled,
-                _ => {}
-            },
+            KeyCode::Char(' ') if self.option_index == 0 => {
+                self.cleanup = !self.cleanup;
+            }
             _ => {}
         }
         EditorEvent::None
@@ -741,7 +734,6 @@ mod tests {
         assert_eq!(profile.steps, vec!["cargo", "flatpak"]);
         assert!(profile.cleanup);
         assert_eq!(profile.notify, NotifyPolicy::OnFailure);
-        assert!(profile.enabled);
         assert_eq!(profile.schedule.preset.on_calendar(), "daily");
     }
 

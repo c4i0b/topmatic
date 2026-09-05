@@ -116,7 +116,6 @@ mod tests {
             schedule: Schedule::default(),
             cleanup: true,
             notify: Default::default(),
-            enabled: true,
             scope: Default::default(),
         }
     }

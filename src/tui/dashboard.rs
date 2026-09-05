@@ -13,7 +13,6 @@ use super::App;
 #[derive(Debug, Clone)]
 pub struct ProfileRow {
     pub name: String,
-    pub enabled: bool,
     pub schedule: String,
     pub next_run: Option<DateTime<Utc>>,
     pub status: Option<RunOutcome>,
@@ -21,9 +20,6 @@ pub struct ProfileRow {
 }
 
 fn state_marker(row: &ProfileRow) -> Span<'static> {
-    if !row.enabled {
-        return Span::styled("○".to_string(), Style::new().fg(Color::DarkGray));
-    }
     if row.timer_active {
         Span::styled("●".to_string(), Style::new().fg(Color::Green))
     } else {
@@ -75,14 +71,10 @@ fn detail_lines<'a>(profile: &Profile, row: &ProfileRow, log_tail: Option<&str>)
             ),
             Span::raw("  "),
             state_marker(row),
-            Span::raw(if row.enabled {
-                if row.timer_active {
-                    " timer active"
-                } else {
-                    " timer not active"
-                }
+            Span::raw(if row.timer_active {
+                " timer active"
             } else {
-                " paused"
+                " timer not active"
             }),
         ]),
         Line::from(""),
@@ -121,10 +113,9 @@ fn detail_lines<'a>(profile: &Profile, row: &ProfileRow, log_tail: Option<&str>)
         Line::from(vec![
             Span::styled("options    ", Style::new().fg(Color::Cyan)),
             Span::raw(format!(
-                "cleanup {} · notify {} · {}",
+                "cleanup {} · notify {}",
                 on_off(profile.cleanup),
                 notify_label(profile.notify),
-                on_off(profile.enabled),
             )),
         ]),
     ];

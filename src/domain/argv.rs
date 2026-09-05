@@ -37,7 +37,6 @@ mod tests {
             schedule: Schedule::default(),
             cleanup,
             notify: NotifyPolicy::default(),
-            enabled: true,
             scope: Default::default(),
         }
     }

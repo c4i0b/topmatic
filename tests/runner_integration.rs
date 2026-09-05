@@ -71,7 +71,6 @@ impl Fixture {
             schedule: Schedule::default(),
             cleanup: true,
             notify,
-            enabled: true,
             scope: Default::default(),
         }
     }

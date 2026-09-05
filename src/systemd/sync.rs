@@ -122,12 +122,7 @@ fn sync_profiles(
         if prune_stray_drop_ins(&drop_dir, &profile.name) {
             report.pruned_drop_ins.push(profile.name.clone());
         }
-        let result = if profile.enabled {
-            ctl.enable_timer(&profile.name)
-        } else {
-            ctl.disable_timer(&profile.name)
-        };
-        if let Err(error) = result {
+        if let Err(error) = ctl.enable_timer(&profile.name) {
             report
                 .errors
                 .push(format!("{}: timer state failed: {error}", profile.name));
@@ -348,7 +343,7 @@ mod tests {
     use crate::domain::profile::{NotifyPolicy, Profile};
     use crate::domain::schedule::{Schedule, SchedulePreset};
 
-    fn profile(name: &str, enabled: bool) -> Profile {
+    fn profile(name: &str) -> Profile {
         Profile {
             name: name.to_string(),
             steps: vec!["flatpak".to_string()],
@@ -361,7 +356,6 @@ mod tests {
             },
             cleanup: true,
             notify: NotifyPolicy::OnFailure,
-            enabled,
             scope: Scope::User,
         }
     }
@@ -378,7 +372,7 @@ mod tests {
     fn installs_templates_drop_ins_and_ensures_timer_state() {
         let tmp = tempfile::tempdir().unwrap();
         let ctl = FakeCtl::new(tmp.path().to_path_buf());
-        let config = config_of(&[profile("alpha", true), profile("beta", false)]);
+        let config = config_of(&[profile("alpha"), profile("beta")]);
 
         let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
 
@@ -396,14 +390,14 @@ mod tests {
         assert!(report.errors.is_empty());
         let calls = ctl.calls();
         assert!(calls.contains(&"enable:alpha".to_string()));
-        assert!(calls.contains(&"disable:beta".to_string()));
+        assert!(calls.contains(&"enable:beta".to_string()));
     }
 
     #[test]
     fn second_sync_is_clean_and_does_not_reload() {
         let tmp = tempfile::tempdir().unwrap();
         let ctl = FakeCtl::new(tmp.path().to_path_buf());
-        let config = config_of(&[profile("alpha", true)]);
+        let config = config_of(&[profile("alpha")]);
 
         sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
         let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
@@ -422,7 +416,7 @@ mod tests {
         let mut ctl = FakeCtl::new(tmp.path().to_path_buf());
         ctl.existing_instances = vec!["old".to_string()];
 
-        let config = config_of(&[profile("alpha", true)]);
+        let config = config_of(&[profile("alpha")]);
         let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
 
         assert!(!orphan_dir.exists());
@@ -434,7 +428,7 @@ mod tests {
     fn system_scope_is_reported_as_unsupported() {
         let tmp = tempfile::tempdir().unwrap();
         let ctl = FakeCtl::new(tmp.path().to_path_buf());
-        let mut system_profile = profile("sysjob", true);
+        let mut system_profile = profile("sysjob");
         system_profile.scope = Scope::System;
         let config = config_of(&[system_profile]);
 
@@ -449,7 +443,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut ctl = FakeCtl::new(tmp.path().to_path_buf());
         ctl.fail_enable_for = Some("alpha".to_string());
-        let config = config_of(&[profile("alpha", true)]);
+        let config = config_of(&[profile("alpha")]);
 
         let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
 
@@ -490,7 +484,7 @@ mod tests {
         .unwrap();
         fs::write(drop_dir.join("notes.txt"), "keep me").unwrap();
         let ctl = FakeCtl::new(tmp.path().to_path_buf());
-        let config = config_of(&[profile("alpha", true)]);
+        let config = config_of(&[profile("alpha")]);
 
         let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
 
@@ -506,7 +500,7 @@ mod tests {
         }
         let tmp = tempfile::tempdir().unwrap();
         let ctl = FakeCtl::new(tmp.path().to_path_buf());
-        let mut broken = profile("alpha", true);
+        let mut broken = profile("alpha");
         broken.schedule.preset = SchedulePreset::Custom {
             calendar: "definitely not a calendar".to_string(),
         };

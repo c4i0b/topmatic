@@ -228,7 +228,11 @@ fn cmd_list() -> anyhow::Result<()> {
         println!(
             "{:<24} {:<7} {:<22} {:<20} {}",
             profile.name,
-            if profile.enabled { "active" } else { "paused" },
+            if ctl.timer_active(&profile.name) {
+                "active"
+            } else {
+                "inactive"
+            },
             profile.schedule.summary(),
             next,
             last

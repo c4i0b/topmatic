@@ -182,15 +182,10 @@ impl App {
             .iter()
             .map(|profile| dashboard::ProfileRow {
                 name: profile.name.clone(),
-                enabled: profile.enabled,
                 schedule: profile.schedule.summary(),
-                next_run: if profile.enabled {
-                    self.ctl.next_run(&profile.name)
-                } else {
-                    None
-                },
+                next_run: self.ctl.next_run(&profile.name),
                 status: read_status(&self.paths, &profile.name).ok().flatten(),
-                timer_active: profile.enabled && self.ctl.timer_active(&profile.name),
+                timer_active: self.ctl.timer_active(&profile.name),
             })
             .collect();
         self.clamp_selection();
@@ -330,7 +325,6 @@ impl App {
                 '?' => self.view = View::Help,
                 'n' => self.view = View::PresetPicker { index: 0 },
                 'e' => self.open_editor_for_selected(),
-                ' ' => self.toggle_enabled(),
                 'd' => {
                     if let Some(name) = self.selected_row().map(|row| row.name.clone()) {
                         self.view = View::Confirm { profile: name };
@@ -437,24 +431,6 @@ impl App {
         } else {
             self.message = format!("saved {}", profile.name);
         }
-        self.rebuild_rows();
-    }
-
-    fn toggle_enabled(&mut self) {
-        let Some(name) = self.selected_row().map(|row| row.name.clone()) else {
-            return;
-        };
-        let Some(profile) = self.config.profile_mut(&name) else {
-            return;
-        };
-        profile.enabled = !profile.enabled;
-        let enabled = profile.enabled;
-        if let Err(error) = config::save(&self.paths, &self.config) {
-            self.message = format!("save failed: {error}");
-            return;
-        }
-        let _ = systemd_sync::sync(&self.config, &self.topmatic_bin, &self.ctl);
-        self.message = format!("{name} {}", if enabled { "resumed" } else { "paused" });
         self.rebuild_rows();
     }
 
@@ -636,7 +612,7 @@ impl App {
         } else {
             match &self.view {
                 View::Dashboard => {
-                    "/ filter  n new  e edit  space pause  d delete  r run  t test  l logs  g linger  s resync  ? help  q quit"
+                    "/ filter  n new  e edit  d delete  r run  t test  l logs  g linger  s resync  ? help  q quit"
                 }
                 View::Editor(_) => {
                     "tab section  space toggle  ←→ adjust  ctrl+s save  esc cancel  q quit"
@@ -784,7 +760,6 @@ impl App {
         let options = [
             format!("  cleanup (auto-clean): {}", on_off(state.cleanup)),
             format!("  notify: {}", notify_label(state.notify)),
-            format!("  enabled: {}", on_off(state.enabled)),
         ];
         for (index, text) in options.iter().enumerate() {
             right_lines.push(Line::from(vec![

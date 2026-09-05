@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 pub fn find_in_path(name: &str, path_value: &str) -> Option<PathBuf> {
@@ -5,7 +6,10 @@ pub fn find_in_path(name: &str, path_value: &str) -> Option<PathBuf> {
         .split(':')
         .filter(|dir| !dir.is_empty())
         .map(|dir| Path::new(dir).join(name))
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| match candidate.metadata() {
+            Ok(metadata) => metadata.is_file() && metadata.permissions().mode() & 0o111 != 0,
+            Err(_) => false,
+        })
 }
 
 #[cfg(test)]
@@ -17,8 +21,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bin = tmp.path().join("tool");
         std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         let path_value = format!("/nonexistent:{}", tmp.path().display());
         assert_eq!(find_in_path("tool", &path_value), Some(bin));
+    }
+
+    #[test]
+    fn skips_non_executable_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("tool");
+        std::fs::write(&bin, "data").unwrap();
+        assert_eq!(find_in_path("tool", tmp.path().to_str().unwrap()), None);
     }
 
     #[test]

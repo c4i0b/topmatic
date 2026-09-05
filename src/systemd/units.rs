@@ -29,13 +29,29 @@ pub fn timer_instance(profile: &str) -> String {
     format!("topmatic@{profile}.timer")
 }
 
+pub fn enabled_instances(units_dir: &Path) -> Vec<String> {
+    let wants_dir = units_dir.join("timers.target.wants");
+    let Ok(entries) = std::fs::read_dir(&wants_dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|name| name.ends_with(".timer"))
+        .filter_map(|name| parse_instance(&name).map(str::to_string))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 pub fn drop_in_dir(profile: &str) -> String {
     format!("topmatic@{profile}.timer.d")
 }
 
 pub fn service_unit(topmatic_bin: &Path, scope: Scope) -> String {
     let path_env = match scope {
-        Scope::User => "%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
+        Scope::User => "%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin",
         Scope::System => "/usr/local/bin:/usr/bin:/bin",
     };
     format!(
@@ -120,7 +136,11 @@ mod tests {
     fn service_unit_references_absolute_binary_and_instance() {
         let unit = service_unit(Path::new("/home/caio/.cargo/bin/topmatic"), Scope::User);
         assert!(unit.contains("ExecStart=/home/caio/.cargo/bin/topmatic run %i"));
-        assert!(unit.contains("Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin"));
+        assert!(
+            unit.contains(
+                "Environment=PATH=%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+            )
+        );
         assert!(unit.contains("Type=oneshot"));
     }
 
@@ -154,6 +174,22 @@ mod tests {
         let drop_in = timer_drop_in(&schedule);
         assert!(drop_in.contains("OnCalendar=Mon *-*-* 09:30:00"));
         assert!(drop_in.contains("RandomizedDelaySec=300"));
+    }
+
+    #[test]
+    fn enables_instances_from_wants_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let wants_dir = dir.path().join("timers.target.wants");
+        std::fs::create_dir_all(&wants_dir).unwrap();
+        for unit in ["topmatic@all-daily.timer", "topmatic@dev-daily.timer"] {
+            std::os::unix::fs::symlink("../topmatic@.timer", wants_dir.join(unit)).unwrap();
+        }
+        std::fs::write(wants_dir.join("topmatic@stale-daily.timer.d"), b"ignored").unwrap();
+        std::fs::write(dir.path().join("topmatic@inactive.timer"), b"not enabled").unwrap();
+        assert_eq!(
+            enabled_instances(dir.path()),
+            vec!["all-daily", "dev-daily"]
+        );
     }
 
     #[test]

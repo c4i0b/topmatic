@@ -10,7 +10,9 @@ pub fn write_file_if_changed(path: &Path, content: &str) -> std::io::Result<bool
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, content)?;
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, content)?;
+    fs::rename(&tmp, path)?;
     Ok(true)
 }
 

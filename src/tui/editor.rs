@@ -183,8 +183,14 @@ impl EditorState {
         if self.name_popup.is_some() {
             return self.handle_popup_key(key);
         }
-        if key.code == KeyCode::Esc && !self.steps_filter_active() {
+        if key.code == KeyCode::Esc && !self.steps_filter.is_engaged() {
             return EditorEvent::Cancel;
+        }
+        if key.code == KeyCode::Esc && self.steps_filter.is_engaged() {
+            self.steps_filter = FilterState::new();
+            self.list_index = 0;
+            self.steps_scroll = 0;
+            return EditorEvent::None;
         }
         if matches!(key.code, KeyCode::Char('q' | 'Q')) && !self.text_entry_focused() {
             return EditorEvent::Quit;
@@ -320,6 +326,12 @@ impl EditorState {
             _ => {
                 if matches!(self.schedule_field(), ScheduleField::Custom) {
                     self.custom.handle_key(key);
+                    let text = self.custom.value.trim();
+                    if !text.is_empty() {
+                        self.schedule.preset = SchedulePreset::Custom {
+                            calendar: text.to_string(),
+                        };
+                    }
                 }
             }
         }
@@ -533,6 +545,23 @@ mod tests {
             editor.schedule.preset,
             SchedulePreset::Weekly { .. }
         ));
+    }
+
+    #[test]
+    fn typing_in_custom_row_switches_preset_to_custom() {
+        let mut editor = new_editor();
+        editor.section = Section::Schedule;
+        editor.schedule_index = quick_choices().len();
+        assert!(matches_quick_choice(&editor.schedule).is_some());
+        editor.handle_key(key(KeyCode::Char('S')));
+        editor.handle_key(key(KeyCode::Char('u')));
+        assert_eq!(editor.custom.value, "Su");
+        assert_eq!(
+            editor.schedule.preset,
+            SchedulePreset::Custom {
+                calendar: "Su".to_string()
+            }
+        );
     }
 
     #[test]

@@ -44,7 +44,7 @@ pub fn run(
     let started = Utc::now();
     let log_path = paths
         .logs_dir(&profile.name)
-        .join(format!("{}.log", started.format("%Y%m%d-%H%M%S")));
+        .join(format!("{}.log", started.format("%Y%m%d-%H%M%S%.3f")));
 
     let lock_file = OpenOptions::new()
         .create(true)
@@ -54,7 +54,7 @@ pub fn run(
     let mut lock = fd_lock::RwLock::new(lock_file);
 
     let outcome = match lock.try_write() {
-        Ok(_guard) => execute(profile, topgrade_bin, paths, dry_run, started, &log_path)?,
+        Ok(_guard) => execute(profile, topgrade_bin, paths, dry_run, started, &log_path),
         Err(_) => RunOutcome {
             profile: profile.name.clone(),
             dry_run,
@@ -70,7 +70,7 @@ pub fn run(
 
     write_status(paths, &profile.name, &outcome)?;
 
-    if !outcome.skipped && notify::should_notify(profile.notify, outcome.success) {
+    if !outcome.skipped && !dry_run && notify::should_notify(profile.notify, outcome.success) {
         let summary = if outcome.success {
             format!("topmatic: {} updated", profile.name)
         } else {
@@ -97,21 +97,31 @@ fn execute(
     dry_run: bool,
     started: DateTime<Utc>,
     log_path: &Path,
-) -> anyhow::Result<RunOutcome> {
+) -> RunOutcome {
     let argv = topgrade_argv(profile, &paths.topgrade_config_file(), dry_run);
     let mut command = Command::new(topgrade_bin);
     command.args(&argv[1..]);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = command.spawn()?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+                .and_then(|mut f| writeln!(f, "failed to spawn topgrade: {error}"));
+            return failed_outcome(profile, dry_run, started, log_path);
+        }
+    };
 
-    let log_out = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)?;
-    let log_err = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)?;
+    let log_out = match OpenOptions::new().create(true).append(true).open(log_path) {
+        Ok(handle) => handle,
+        Err(_) => return failed_outcome(profile, dry_run, started, log_path),
+    };
+    let log_err = match OpenOptions::new().create(true).append(true).open(log_path) {
+        Ok(handle) => handle,
+        Err(_) => return failed_outcome(profile, dry_run, started, log_path),
+    };
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
 
@@ -128,12 +138,20 @@ fn execute(
         let _ = writer.flush();
     });
 
-    let status = child.wait()?;
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(error) => {
+            if let Ok(mut err_log) = OpenOptions::new().create(true).append(true).open(log_path) {
+                let _ = writeln!(err_log, "wait failed: {error}");
+            }
+            return failed_outcome(profile, dry_run, started, log_path);
+        }
+    };
     let _ = out_handle.join();
     let _ = err_handle.join();
 
     let finished = Utc::now();
-    Ok(RunOutcome {
+    RunOutcome {
         profile: profile.name.clone(),
         dry_run,
         skipped: false,
@@ -143,7 +161,26 @@ fn execute(
         finished_at: finished,
         duration_secs: (finished - started).num_milliseconds() as f64 / 1000.0,
         log_path: log_path.to_path_buf(),
-    })
+    }
+}
+
+fn failed_outcome(
+    profile: &Profile,
+    dry_run: bool,
+    started: DateTime<Utc>,
+    log_path: &Path,
+) -> RunOutcome {
+    RunOutcome {
+        profile: profile.name.clone(),
+        dry_run,
+        skipped: false,
+        success: false,
+        exit_code: None,
+        started_at: started,
+        finished_at: Utc::now(),
+        duration_secs: 0.0,
+        log_path: log_path.to_path_buf(),
+    }
 }
 
 fn write_status(paths: &Paths, profile: &str, outcome: &RunOutcome) -> anyhow::Result<()> {
@@ -151,7 +188,9 @@ fn write_status(paths: &Paths, profile: &str, outcome: &RunOutcome) -> anyhow::R
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, serde_json::to_string_pretty(outcome)?)?;
+    let tmp = path.with_extension("status.tmp");
+    fs::write(&tmp, serde_json::to_string_pretty(outcome)?)?;
+    fs::rename(&tmp, &path)?;
     Ok(())
 }
 

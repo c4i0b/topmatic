@@ -99,7 +99,7 @@ pub struct Schedule {
 }
 
 fn default_randomized_delay_sec() -> u64 {
-    900
+    DEFAULT_DELAY_SEC
 }
 
 impl Default for Schedule {
@@ -295,6 +295,6 @@ mod tests {
     #[test]
     fn missing_randomized_delay_falls_back_to_default() {
         let schedule: Schedule = toml::from_str("preset = 'daily'\nhour = 5\nminute = 0").unwrap();
-        assert_eq!(schedule.randomized_delay_sec, 900);
+        assert_eq!(schedule.randomized_delay_sec, DEFAULT_DELAY_SEC);
     }
 }

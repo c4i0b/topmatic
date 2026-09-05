@@ -66,27 +66,7 @@ impl SystemdCtl for RealSystemdCtl {
     }
 
     fn instances(&self) -> Vec<String> {
-        let output = self
-            .systemctl(&[
-                "list-unit-files",
-                "topmatic@*.timer",
-                "--no-legend",
-                "--no-pager",
-                "--plain",
-            ])
-            .output();
-        let Ok(output) = output else {
-            return Vec::new();
-        };
-        if !output.status.success() {
-            return Vec::new();
-        }
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| line.split_whitespace().next())
-            .filter_map(units::parse_instance)
-            .map(str::to_string)
-            .collect()
+        crate::systemd::units::enabled_instances(&self.unit_dir())
     }
 
     fn next_run(&self, profile: &str) -> Option<DateTime<Utc>> {

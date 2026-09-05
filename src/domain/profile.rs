@@ -71,6 +71,11 @@ pub fn sanitize_name(input: &str) -> Result<String, InvalidNameError> {
     if !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')) {
         return Err(InvalidNameError(trimmed.to_string()));
     }
+    if trimmed.chars().count() > 64 {
+        return Err(InvalidNameError(
+            "name longer than 64 characters".to_string(),
+        ));
+    }
     Ok(trimmed.to_string())
 }
 
@@ -103,6 +108,14 @@ mod tests {
         for name in ["", "-x", ".hidden", "has space", "dígito", "a/b", "a:b"] {
             assert!(sanitize_name(name).is_err(), "{name} should be rejected");
         }
+    }
+
+    #[test]
+    fn rejects_names_longer_than_64_chars() {
+        let long = "a".repeat(65);
+        assert!(sanitize_name(&long).is_err());
+        let ok = "a".repeat(64);
+        assert!(sanitize_name(&ok).is_ok());
     }
 
     #[test]

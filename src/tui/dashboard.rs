@@ -155,11 +155,15 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
     ])
     .areas(area);
 
+    let start = app.list_scroll as usize;
     let items: Vec<ListItem> = app
         .visible_rows()
         .iter()
+        .skip(start)
+        .take(super::LIST_VISIBLE)
         .enumerate()
-        .map(|(index, row)| {
+        .map(|(offset, row)| {
+            let index = start + offset;
             let line = if index == app.selected {
                 Line::styled(
                     format!("▶ {}", row.name),

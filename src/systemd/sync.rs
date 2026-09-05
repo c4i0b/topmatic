@@ -89,6 +89,7 @@ fn sync_profiles(
 ) -> BTreeSet<String> {
     let mut known = BTreeSet::new();
     for profile in &config.profiles {
+        known.insert(profile.name.clone());
         if profile.scope == Scope::System {
             report.errors.push(format!(
                 "{}: system scope is not supported yet",
@@ -96,7 +97,6 @@ fn sync_profiles(
             ));
             continue;
         }
-        known.insert(profile.name.clone());
         if let SchedulePreset::Custom { calendar } = &profile.schedule.preset
             && let Err(error) = super::validate_on_calendar(calendar)
         {
@@ -238,15 +238,40 @@ pub fn reset(ctl: &dyn SystemdCtl, paths: &Paths, include_config: bool) -> Reset
     if include_config {
         let config_file = paths.config_file();
         if config_file.exists() {
-            let backup = config_file.with_extension("toml.bak");
-            if fs::rename(&config_file, &backup).is_ok() {
-                report.config_backup = Some(backup);
+            let unique = unique_backup_path(&config_file);
+            if fs::rename(&config_file, &unique).is_ok() {
+                report.config_backup = Some(unique);
             }
         }
     }
 
     let _ = ctl.daemon_reload();
     report
+}
+
+fn unique_backup_path(config_file: &std::path::Path) -> std::path::PathBuf {
+    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S%.3f");
+    let mut candidate = config_file.with_file_name(format!(
+        "{}.bak-{}",
+        config_file
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        timestamp
+    ));
+    let mut counter = 0u32;
+    while candidate.exists() {
+        counter += 1;
+        candidate = config_file.with_file_name(format!(
+            "{}.bak-{}-{counter}",
+            config_file
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy(),
+            timestamp
+        ));
+    }
+    candidate
 }
 
 #[cfg(test)]
@@ -550,15 +575,10 @@ mod tests {
         assert!(unit_dir.join("unrelated.timer").exists());
         assert!(!paths.state_dir.exists());
         assert!(!paths.config_file().exists());
-        assert_eq!(
-            report.config_backup,
-            Some(paths.config_file().with_extension("toml.bak"))
-        );
-        assert!(
-            fs::read_to_string(paths.config_file().with_extension("toml.bak"))
-                .unwrap()
-                .contains("# config")
-        );
+        let backup = report.config_backup.expect("backup path reported");
+        assert!(fs::read_to_string(&backup).unwrap().contains("# config"));
+        assert!(!paths.config_file().exists());
+        assert!(!backup.starts_with(paths.config_file()));
         assert!(ctl.calls().contains(&"stop_all".to_string()));
         assert!(ctl.calls().contains(&"disable:alpha".to_string()));
         assert!(ctl.calls().contains(&"reload".to_string()));

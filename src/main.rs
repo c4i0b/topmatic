@@ -247,13 +247,24 @@ fn cmd_edit() -> anyhow::Result<()> {
         std::fs::create_dir_all(&paths.config_dir)?;
         std::fs::write(
             paths.config_file(),
-            "# topmatic configuration\n\n[[profiles]]\n",
+            "# topmatic configuration.\n\
+             # Add profiles with `topmatic add` or the TUI; hand-editing is supported.\n\
+             #\n\
+             # Example:\n\
+             # [[profiles]]\n\
+             # name = \"daily\"\n\
+             # steps = [\"cargo\", \"flatpak\"]\n\
+             # [profiles.schedule]\n\
+             # preset = \"daily\"\n\
+             # randomized_delay_sec = 1800\n",
         )?;
     }
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-    let status = std::process::Command::new(&editor)
-        .arg(paths.config_file())
-        .status()?;
+    let mut split = editor.split_whitespace();
+    let program = split.next().unwrap_or("vi");
+    let mut command = std::process::Command::new(program);
+    command.args(split).arg(paths.config_file());
+    let status = command.status()?;
     if !status.success() {
         anyhow::bail!("editor {editor:?} exited with {status}");
     }
@@ -318,7 +329,10 @@ fn cmd_run(name: &str, dry_run: bool) -> anyhow::Result<()> {
     let profile = match config.profile(name) {
         Some(profile) => profile.clone(),
         None => {
-            if let Some(issue) = issues.iter().find(|issue| issue.starts_with(name)) {
+            if let Some(issue) = issues
+                .iter()
+                .find(|issue| issue.starts_with(&format!("{name}:")))
+            {
                 anyhow::bail!("profile {name:?} is invalid and was skipped: {issue}");
             }
             anyhow::bail!(
@@ -341,6 +355,7 @@ fn cmd_run(name: &str, dry_run: bool) -> anyhow::Result<()> {
     let outcome = topmatic::runner::run(&profile, &topgrade_bin, &paths, notify.as_ref(), dry_run)?;
     if outcome.skipped {
         eprintln!("another run of {name:?} is already in progress");
+        return Ok(());
     }
     std::process::exit(i32::from(!outcome.success));
 }

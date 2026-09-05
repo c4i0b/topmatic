@@ -13,6 +13,43 @@ pub struct AppConfig {
     pub profiles: Vec<Profile>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum SavePlan {
+    Create,
+    Replace,
+    RenameFrom(String),
+}
+
+pub fn save_plan(
+    config: &AppConfig,
+    original_name: Option<&str>,
+    new_name: &str,
+) -> Result<SavePlan, String> {
+    match original_name {
+        Some(original) if original == new_name => {
+            if config.profile(new_name).is_some() {
+                Ok(SavePlan::Replace)
+            } else {
+                Ok(SavePlan::Create)
+            }
+        }
+        Some(original) => {
+            if config.profile(new_name).is_some() {
+                Err(format!("profile {new_name} already exists"))
+            } else {
+                Ok(SavePlan::RenameFrom(original.to_string()))
+            }
+        }
+        None => {
+            if config.profile(new_name).is_some() {
+                Err(format!("profile {new_name} already exists"))
+            } else {
+                Ok(SavePlan::Create)
+            }
+        }
+    }
+}
+
 pub fn validate_profile(profile: &Profile) -> Vec<String> {
     let mut errors = Vec::new();
     if sanitize_name(&profile.name).is_err() {
@@ -23,6 +60,15 @@ pub fn validate_profile(profile: &Profile) -> Vec<String> {
     }
     if profile.steps.is_empty() {
         errors.push("no steps selected".to_string());
+    }
+    for step in &profile.steps {
+        if step.trim().is_empty() {
+            errors.push("step id must not be empty".to_string());
+        } else if step.starts_with('-') {
+            errors.push(format!("step id must not start with '-': {step}"));
+        } else if step.chars().any(char::is_whitespace) {
+            errors.push(format!("step id must not contain whitespace: {step}"));
+        }
     }
     match &profile.schedule.preset {
         SchedulePreset::EveryNHours { hours } if !(1..=23).contains(hours) => {
@@ -42,15 +88,41 @@ pub fn validate_profile(profile: &Profile) -> Vec<String> {
 }
 
 pub fn load_validated(paths: &Paths) -> anyhow::Result<(AppConfig, Vec<String>)> {
-    let raw = load(paths)?;
+    let path = paths.config_file();
+    if !path.exists() {
+        return Ok((AppConfig::default(), Vec::new()));
+    }
+    let text = std::fs::read_to_string(&path)?;
+    let value: toml::Value = toml::from_str(&text)?;
     let mut config = AppConfig::default();
     let mut issues = Vec::new();
-    for profile in raw.profiles {
-        let errors = validate_profile(&profile);
-        if errors.is_empty() {
-            config.upsert(profile);
-        } else {
-            issues.push(format!("{}: {}", profile.name, errors.join("; ")));
+    let Some(profiles) = value.get("profiles").and_then(|v| v.as_array()) else {
+        return Ok((config, issues));
+    };
+    for (index, entry) in profiles.iter().enumerate() {
+        match Profile::deserialize(entry.clone()) {
+            Ok(mut profile) => {
+                profile.schedule.preset = profile.schedule.preset.clone().normalized();
+                if config.profile(&profile.name).is_some() {
+                    issues.push(format!(
+                        "profile {} defined twice (kept the last)",
+                        profile.name
+                    ));
+                }
+                let errors = validate_profile(&profile);
+                if errors.is_empty() {
+                    config.upsert(profile);
+                } else {
+                    issues.push(format!("{}: {}", profile.name, errors.join("; ")));
+                }
+            }
+            Err(error) => {
+                let name = match entry.get("name").and_then(|n| n.as_str()) {
+                    Some(name) => name.to_string(),
+                    None => format!("#{index}"),
+                };
+                issues.push(format!("invalid profile {name}: {error}"));
+            }
         }
     }
     Ok((config, issues))
@@ -80,16 +152,7 @@ impl AppConfig {
 }
 
 pub fn load(paths: &Paths) -> anyhow::Result<AppConfig> {
-    let path = paths.config_file();
-    if !path.exists() {
-        return Ok(AppConfig::default());
-    }
-    let text = std::fs::read_to_string(&path)?;
-    let mut config: AppConfig = toml::from_str(&text)?;
-    for profile in &mut config.profiles {
-        profile.schedule.preset = profile.schedule.preset.clone().normalized();
-    }
-    Ok(config)
+    Ok(load_validated(paths)?.0)
 }
 
 pub fn save(paths: &Paths, config: &AppConfig) -> anyhow::Result<()> {
@@ -233,5 +296,66 @@ mod tests {
         assert!(issues[0].starts_with("bad job"));
         assert!(issues[0].contains("invalid name"));
         assert!(issues[0].contains("OnCalendar"));
+    }
+
+    #[test]
+    fn save_plan_replaces_same_name_and_blocks_duplicates() {
+        let mut config = AppConfig::default();
+        config.upsert(sample_profile("alpha"));
+        assert_eq!(
+            save_plan(&config, Some("alpha"), "alpha"),
+            Ok(SavePlan::Replace)
+        );
+        assert_eq!(
+            save_plan(&config, None, "alpha"),
+            Err("profile alpha already exists".to_string())
+        );
+        assert_eq!(
+            save_plan(&config, Some("alpha"), "beta"),
+            Ok(SavePlan::RenameFrom("alpha".to_string()))
+        );
+        assert_eq!(
+            save_plan(&config, Some("alpha"), "alpha"),
+            Ok(SavePlan::Replace)
+        );
+        config.upsert(sample_profile("beta"));
+        assert!(
+            save_plan(&config, Some("alpha"), "beta").is_err(),
+            "rename onto an existing profile must stay a no-op"
+        );
+        assert_eq!(save_plan(&config, None, "gamma"), Ok(SavePlan::Create));
+    }
+
+    #[test]
+    fn load_validated_survives_structural_errors_per_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(
+            paths.config_file(),
+            "[[profiles]]\nname = \"good\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 5\nminute = 0\n\n[[profiles]]\nnot_a_profile_here = true\n\n[[profiles]]\nname = \"dup\"\nsteps = [\"cargo\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 5\nminute = 0\n\n[[profiles]]\nname = \"dup\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 5\nminute = 0\n",
+        )
+        .unwrap();
+
+        let (valid, issues) = load_validated(&paths).unwrap();
+        assert_eq!(valid.profiles.len(), 2, "good and last dup survive");
+        assert_eq!(valid.profiles[1].name, "dup");
+        assert_eq!(valid.profiles[1].steps, vec!["flatpak".to_string()]);
+        let joined = issues.join("\n");
+        assert!(joined.contains("invalid profile #1"));
+        assert!(joined.contains("dup defined twice"));
+    }
+
+    #[test]
+    fn validator_rejects_bad_step_identifiers() {
+        let mut leading_dash = sample_profile("a");
+        leading_dash.steps = vec!["-help".to_string()];
+        let mut spaces = sample_profile("b");
+        spaces.steps = vec!["cargo install".to_string()];
+        let mut empty = sample_profile("c");
+        empty.steps = vec!["".to_string()];
+        assert!(!validate_profile(&leading_dash).is_empty());
+        assert!(!validate_profile(&spaces).is_empty());
+        assert!(!validate_profile(&empty).is_empty());
     }
 }

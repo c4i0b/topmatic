@@ -16,6 +16,8 @@ use crossterm::event::{
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
+
+const LIST_VISIBLE: usize = 14;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, ListItem, Paragraph};
 
@@ -44,6 +46,7 @@ pub struct App {
     pub catalog: Vec<String>,
     pub view: View,
     pub selected: usize,
+    pub list_scroll: u16,
     pub rows: Vec<dashboard::ProfileRow>,
     pub filter: FilterState,
     pub list_area: Cell<Rect>,
@@ -105,6 +108,7 @@ impl App {
             catalog: Vec::new(),
             view: View::Dashboard,
             selected: 0,
+            list_scroll: 0,
             rows: Vec::new(),
             filter: FilterState::new(),
             list_area: Cell::new(Rect::default()),
@@ -214,11 +218,18 @@ impl App {
         if self.selected >= len {
             self.selected = len.saturating_sub(1);
         }
+        let start = self.list_scroll as usize;
+        if self.selected < start {
+            self.list_scroll = self.selected as u16;
+        } else if start.saturating_add(LIST_VISIBLE) <= self.selected {
+            self.list_scroll = (self.selected + 1 - LIST_VISIBLE) as u16;
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         let quits = matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'));
-        if quits {
+        let editing_dashboard_filter = matches!(self.view, View::Dashboard) && self.filter.active;
+        if quits && !editing_dashboard_filter {
             match &self.view {
                 View::Dashboard | View::Help | View::Confirm { .. } => {
                     self.should_quit = true;
@@ -298,15 +309,18 @@ impl App {
                 if self.selected + 1 < self.visible_rows().len() {
                     self.selected += 1;
                 }
+                self.clamp_selection();
             }
             KeyCode::Char('k' | 'K') | KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
+                self.clamp_selection();
             }
             KeyCode::Enter => self.open_editor_for_selected(),
             KeyCode::Esc => {
                 if self.filter.is_engaged() {
                     self.filter.edit = LineEdit::new(String::new());
                     self.selected = 0;
+                    self.list_scroll = 0;
                 }
             }
             KeyCode::Char(c) => match c.to_ascii_lowercase() {
@@ -335,11 +349,13 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
                 self.selected = self.selected.saturating_sub(1);
+                self.clamp_selection();
             }
             MouseEventKind::ScrollDown => {
                 if self.selected + 1 < self.visible_rows().len() {
                     self.selected += 1;
                 }
+                self.clamp_selection();
             }
             MouseEventKind::Down(MouseButton::Left)
                 if mouse.column >= list.x
@@ -382,18 +398,19 @@ impl App {
             self.view = View::Editor(Box::new(state));
             return;
         }
-        let renamed_from = state
-            .original_name
-            .clone()
-            .filter(|original| *original != profile.name);
-        if let Some(original) = &renamed_from {
-            self.config.remove(original);
+        let plan =
+            match config::save_plan(&self.config, state.original_name.as_deref(), &profile.name) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    self.message = error;
+                    self.view = View::Editor(Box::new(state));
+                    return;
+                }
+            };
+        if let config::SavePlan::RenameFrom(original) = &plan
+            && self.config.remove(original)
+        {
             let _ = crate::systemd::sync::purge_profile_state(&self.paths, original);
-        }
-        if self.config.profile(&profile.name).is_some() {
-            self.message = format!("profile {} already exists", profile.name);
-            self.view = View::Editor(Box::new(state));
-            return;
         }
         self.config.upsert(profile.clone());
         if let Err(error) = config::save(&self.paths, &self.config) {
@@ -688,6 +705,16 @@ impl App {
                 if selected { "]" } else { " " },
             )));
         }
+        let custom_row = choices.len();
+        lines.push(Line::from(format!(
+            "{}custom OnCalendar: {}",
+            if focus_schedule && state.schedule_index == custom_row {
+                "▶ "
+            } else {
+                "  "
+            },
+            state.custom.value
+        )));
         for (row, text) in schedule_context_lines(state).iter().enumerate() {
             let index = choices.len() + 1 + row;
             lines.push(Line::from(format!(
@@ -700,16 +727,6 @@ impl App {
                 text
             )));
         }
-        let custom_row = choices.len();
-        lines.push(Line::from(format!(
-            "{}custom OnCalendar: {}",
-            if focus_schedule && state.schedule_index == custom_row {
-                "▶ "
-            } else {
-                "  "
-            },
-            state.custom.value
-        )));
         let jitter_row = state_rows_count(state) - 1;
         lines.push(Line::from(format!(
             "{}jitter: {}",

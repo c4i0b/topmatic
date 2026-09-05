@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use super::repos::RepoEntry;
 use super::schedule::Schedule;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -43,8 +42,6 @@ impl NotifyPolicy {
 pub struct Profile {
     pub name: String,
     pub steps: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub repos: Vec<RepoEntry>,
     pub schedule: Schedule,
     #[serde(default = "default_true")]
     pub cleanup: bool,

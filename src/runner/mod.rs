@@ -39,8 +39,7 @@ pub fn run(
     fs::create_dir_all(&paths.config_dir)?;
     fs::create_dir_all(paths.state_dir.join("status"))?;
     fs::create_dir_all(paths.logs_dir(&profile.name))?;
-    let topgrade_config_path = paths.topgrade_config_file_for(profile);
-    topgrade_config::write_for(profile, &topgrade_config_path)?;
+    topgrade_config::write_if_changed(&paths.topgrade_config_file())?;
 
     let started = Utc::now();
     let log_path = paths
@@ -55,14 +54,7 @@ pub fn run(
     let mut lock = fd_lock::RwLock::new(lock_file);
 
     let outcome = match lock.try_write() {
-        Ok(_guard) => execute(
-            profile,
-            topgrade_bin,
-            &topgrade_config_path,
-            dry_run,
-            started,
-            &log_path,
-        )?,
+        Ok(_guard) => execute(profile, topgrade_bin, paths, dry_run, started, &log_path)?,
         Err(_) => RunOutcome {
             profile: profile.name.clone(),
             dry_run,
@@ -101,12 +93,12 @@ pub fn run(
 fn execute(
     profile: &Profile,
     topgrade_bin: &Path,
-    topgrade_config_path: &Path,
+    paths: &Paths,
     dry_run: bool,
     started: DateTime<Utc>,
     log_path: &Path,
 ) -> anyhow::Result<RunOutcome> {
-    let argv = topgrade_argv(profile, topgrade_config_path, dry_run);
+    let argv = topgrade_argv(profile, &paths.topgrade_config_file(), dry_run);
     let mut command = Command::new(topgrade_bin);
     command.args(&argv[1..]);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -169,28 +161,6 @@ pub fn read_status(paths: &Paths, profile: &str) -> anyhow::Result<Option<RunOut
         return Ok(None);
     }
     Ok(Some(serde_json::from_str(&fs::read_to_string(path)?)?))
-}
-
-pub fn verify(
-    profile: &Profile,
-    topgrade_bin: &Path,
-    paths: &Paths,
-    notify: &dyn NotifyBackend,
-) -> Result<(), String> {
-    let outcome =
-        run(profile, topgrade_bin, paths, notify, true).map_err(|error| error.to_string())?;
-    if outcome.skipped {
-        return Err("another run is already in progress".to_string());
-    }
-    if outcome.success {
-        Ok(())
-    } else {
-        Err(format!(
-            "dry-run failed (exit {:?}), log: {}",
-            outcome.exit_code,
-            outcome.log_path.display()
-        ))
-    }
 }
 
 struct Tee<A: Write, B: Write>(A, B);

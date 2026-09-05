@@ -10,7 +10,6 @@ use crate::systemd::validate_on_calendar;
 use super::input::LineEdit;
 
 pub const STEPS_VISIBLE: usize = 10;
-pub const REPOS_VISIBLE: usize = 6;
 
 pub fn window_bounds(
     index: usize,
@@ -35,16 +34,14 @@ pub fn window_bounds(
 pub enum Section {
     Name,
     Steps,
-    Repos,
     Schedule,
     Options,
     Actions,
 }
 
-const SECTIONS: [Section; 6] = [
+const SECTIONS: [Section; 5] = [
     Section::Name,
     Section::Steps,
-    Section::Repos,
     Section::Schedule,
     Section::Options,
     Section::Actions,
@@ -109,16 +106,9 @@ pub struct EditorState {
     pub filter: LineEdit,
     pub steps_filtering: bool,
     pub steps_scroll: usize,
-    pub repo_scroll: usize,
     pub custom: LineEdit,
     pub catalog: Vec<StepEntry>,
     pub selected_steps: BTreeSet<String>,
-    pub repos: Vec<crate::domain::repos::RepoEntry>,
-    pub repo_path: LineEdit,
-    pub repo_apply: LineEdit,
-    pub repo_scan: LineEdit,
-    pub scan_results: Vec<String>,
-    pub repo_index: usize,
     pub schedule: Schedule,
     pub cleanup: bool,
     pub notify: NotifyPolicy,
@@ -129,6 +119,7 @@ pub struct EditorState {
     pub option_index: usize,
     pub action_index: usize,
     pub typed_digits: String,
+    pub preset_origin: Option<usize>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -148,7 +139,6 @@ impl EditorState {
                 filter: LineEdit::new(String::new()),
                 steps_filtering: false,
                 steps_scroll: 0,
-                repo_scroll: 0,
                 custom: LineEdit::new(
                     if let SchedulePreset::Custom { calendar } = &profile.schedule.preset {
                         calendar.clone()
@@ -158,22 +148,17 @@ impl EditorState {
                 ),
                 catalog,
                 selected_steps: profile.steps.iter().cloned().collect(),
-                repos: profile.repos.clone(),
-                repo_path: LineEdit::new(String::new()),
-                repo_apply: LineEdit::new(String::new()),
-                repo_scan: LineEdit::new(String::new()),
-                scan_results: Vec::new(),
                 schedule: profile.schedule.clone(),
                 cleanup: profile.cleanup,
                 notify: profile.notify,
                 enabled: profile.enabled,
                 section: Section::Steps,
                 list_index: 0,
-                repo_index: 0,
                 schedule_index: 0,
                 option_index: 0,
                 action_index: 0,
                 typed_digits: String::new(),
+                preset_origin: None,
             },
             None => Self {
                 creating: true,
@@ -181,28 +166,35 @@ impl EditorState {
                 filter: LineEdit::new(String::new()),
                 steps_filtering: false,
                 steps_scroll: 0,
-                repo_scroll: 0,
                 custom: LineEdit::new(String::new()),
                 catalog,
                 selected_steps: BTreeSet::new(),
-                repos: Vec::new(),
-                repo_path: LineEdit::new(String::new()),
-                repo_apply: LineEdit::new(String::new()),
-                repo_scan: LineEdit::new(String::new()),
-                scan_results: Vec::new(),
                 schedule: Schedule::default(),
                 cleanup: true,
                 notify: NotifyPolicy::OnFailure,
                 enabled: true,
                 section: Section::Steps,
                 list_index: 0,
-                repo_index: 0,
                 schedule_index: 0,
                 option_index: 0,
                 action_index: 0,
                 typed_digits: String::new(),
+                preset_origin: None,
             },
         }
+    }
+
+    pub fn from_preset(
+        preset_index: usize,
+        catalog: Vec<StepEntry>,
+        steps: Vec<String>,
+        suggested_name: &str,
+    ) -> Self {
+        let mut editor = Self::new(None, catalog);
+        editor.name = LineEdit::new(suggested_name.to_string());
+        editor.selected_steps = steps.into_iter().collect();
+        editor.preset_origin = Some(preset_index);
+        editor
     }
 
     pub fn filtered_steps(&self) -> Vec<&StepEntry> {
@@ -247,19 +239,10 @@ impl EditorState {
             }
             other => other.clone(),
         };
-        let mut steps: Vec<String> = self.selected_steps.iter().cloned().collect();
-        if !self.repos.is_empty() && !steps.iter().any(|step| step == "git_repos") {
-            steps.push("git_repos".to_string());
-        }
-        if self.repos.iter().any(|repo| repo.apply.is_some())
-            && !steps.iter().any(|step| step == "custom_commands")
-        {
-            steps.push("custom_commands".to_string());
-        }
+        let steps: Vec<String> = self.selected_steps.iter().cloned().collect();
         Ok(Profile {
             name,
             steps,
-            repos: self.repos.clone(),
             schedule: Schedule {
                 preset,
                 randomized_delay_sec: self.schedule.randomized_delay_sec,
@@ -294,7 +277,6 @@ impl EditorState {
         match self.section {
             Section::Name => self.handle_name_key(key),
             Section::Steps => self.handle_steps_key(key),
-            Section::Repos => self.handle_repos_key(key),
             Section::Schedule => self.handle_schedule_key(key),
             Section::Options => self.handle_options_key(key),
             Section::Actions => self.handle_actions_key(key),
@@ -303,7 +285,6 @@ impl EditorState {
 
     fn reset_indices(&mut self) {
         self.list_index = 0;
-        self.repo_index = 0;
         self.schedule_index = 0;
         self.option_index = 0;
         self.action_index = 0;
@@ -313,7 +294,6 @@ impl EditorState {
         match self.section {
             Section::Name => self.creating,
             Section::Steps => self.steps_filtering,
-            Section::Repos => self.repo_index <= 2,
             Section::Schedule => self.custom_row_selected(),
             Section::Options | Section::Actions => false,
         }
@@ -381,98 +361,6 @@ impl EditorState {
                 self.selected_steps.insert(id);
             }
         }
-    }
-
-    fn handle_repos_key(&mut self, key: KeyEvent) -> EditorEvent {
-        let rows = 3 + self.repos.len();
-        match key.code {
-            KeyCode::Up => {
-                self.repo_index = self.repo_index.saturating_sub(1);
-                self.sync_repo_scroll();
-            }
-            KeyCode::Down => {
-                if self.repo_index + 1 < rows {
-                    self.repo_index += 1;
-                    self.sync_repo_scroll();
-                }
-            }
-            KeyCode::Enter => match self.repo_index {
-                0 | 1 => self.add_repo_from_inputs(),
-                2 => self.run_scan(),
-                index => {
-                    let _ = index;
-                }
-            },
-            KeyCode::Char('d' | 'D') if self.repo_index >= 3 => {
-                self.repos.remove(self.repo_index - 3);
-                self.repo_index = self.repo_index.saturating_sub(1).max(2);
-                self.sync_repo_scroll();
-            }
-            KeyCode::Backspace if self.repo_index >= 3 => {
-                self.repos.remove(self.repo_index - 3);
-                self.repo_index = self.repo_index.saturating_sub(1).max(2);
-                self.sync_repo_scroll();
-            }
-            _ => match self.repo_index {
-                0 => self.repo_path.handle_key(key),
-                1 => self.repo_apply.handle_key(key),
-                2 => self.repo_scan.handle_key(key),
-                _ => {}
-            },
-        }
-        EditorEvent::None
-    }
-
-    fn sync_repo_scroll(&mut self) {
-        if self.repos.is_empty() || self.repo_index < 3 {
-            self.repo_scroll = 0;
-            return;
-        }
-        let entry_index = self.repo_index - 3;
-        let (start, _) = window_bounds(
-            entry_index,
-            self.repos.len(),
-            REPOS_VISIBLE,
-            &mut self.repo_scroll,
-        );
-        self.repo_scroll = start;
-    }
-
-    fn add_repo_from_inputs(&mut self) {
-        let path = self.repo_path.value.trim().to_string();
-        if path.is_empty() {
-            return;
-        }
-        let apply = self.repo_apply.value.trim().to_string();
-        let entry = if apply.is_empty() {
-            crate::domain::repos::RepoEntry::pull_only(&path)
-        } else {
-            crate::domain::repos::RepoEntry::with_apply(&path, &apply)
-        };
-        if !self.repos.iter().any(|repo| repo.path == entry.path) {
-            self.repos.push(entry);
-        }
-        self.repo_path = LineEdit::new(String::new());
-        self.repo_apply = LineEdit::new(String::new());
-    }
-
-    fn run_scan(&mut self) {
-        let root = self.repo_scan.value.trim().to_string();
-        if root.is_empty() {
-            return;
-        }
-        let home = std::env::var("HOME").unwrap_or_default();
-        let expanded = crate::domain::repos::expand_home(&root, &home);
-        let found = crate::domain::repos::scan(std::path::Path::new(&expanded), 3);
-        for path in found {
-            let path = path.to_string_lossy().into_owned();
-            if !self.repos.iter().any(|repo| repo.path == path) {
-                self.repos
-                    .push(crate::domain::repos::RepoEntry::pull_only(path));
-            }
-        }
-        self.repo_scan = LineEdit::new(String::new());
-        self.scan_results.clear();
     }
 
     fn handle_schedule_key(&mut self, key: KeyEvent) -> EditorEvent {
@@ -801,15 +689,6 @@ pub fn validate_draft(profile: &Profile) -> Result<(), String> {
     if let SchedulePreset::Custom { calendar } = &profile.schedule.preset {
         validate_on_calendar(calendar).map_err(|error| format!("invalid OnCalendar: {error}"))?;
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    for repo in &profile.repos {
-        if !crate::domain::repos::is_git_repo(&repo.path, &home) {
-            return Err(format!(
-                "repo {} is not an existing git repository",
-                repo.path
-            ));
-        }
-    }
     Ok(())
 }
 
@@ -1095,7 +974,6 @@ mod tests {
         for section in [
             Section::Name,
             Section::Steps,
-            Section::Repos,
             Section::Schedule,
             Section::Options,
             Section::Actions,
@@ -1125,6 +1003,27 @@ mod tests {
     }
 
     #[test]
+    fn from_preset_prefills_name_steps_and_default_schedule() {
+        let entries = catalog_entries();
+        let steps = vec!["flatpak".to_string()];
+        let editor = EditorState::from_preset(2, entries, steps, "flatpak-daily");
+        assert!(editor.creating);
+        assert_eq!(editor.name.value, "flatpak-daily");
+        assert_eq!(editor.section, Section::Steps);
+        assert!(editor.selected_steps.contains("flatpak"));
+        assert_eq!(
+            editor.schedule.preset,
+            crate::domain::schedule::SchedulePreset::Spread {
+                period: crate::domain::schedule::SpreadPeriod::Daily
+            }
+        );
+        assert_eq!(editor.preset_origin, Some(2));
+        let profile = editor.to_profile().unwrap();
+        assert_eq!(profile.name, "flatpak-daily");
+        assert_eq!(profile.steps, vec!["flatpak"]);
+    }
+
+    #[test]
     fn enter_in_the_name_field_moves_to_steps() {
         let mut editor = new_editor();
         editor.section = Section::Name;
@@ -1146,66 +1045,6 @@ mod tests {
         assert_eq!(window_bounds(3, 4, 10, &mut tiny), (0, 4));
         let mut zero = 0usize;
         assert_eq!(window_bounds(2, 8, 0, &mut zero), (0, 0));
-    }
-
-    #[test]
-    fn repos_add_remove_and_scan() {
-        let mut editor = new_editor();
-        editor.section = Section::Repos;
-        editor.repo_index = 0;
-        editor.repo_path = LineEdit::new("/tmp/one");
-        editor.repo_apply = LineEdit::new("stow bash");
-        editor.handle_key(key(KeyCode::Enter));
-        assert_eq!(editor.repos.len(), 1);
-        assert_eq!(editor.repos[0].apply.as_deref(), Some("stow bash"));
-        assert!(editor.repo_path.value.is_empty());
-
-        editor.repo_path = LineEdit::new("/tmp/one");
-        editor.handle_key(key(KeyCode::Enter));
-        assert_eq!(editor.repos.len(), 1, "duplicates are ignored");
-
-        editor.repo_index = 3;
-        editor.handle_key(key(KeyCode::Char('d')));
-        assert!(editor.repos.is_empty());
-    }
-
-    #[test]
-    fn to_profile_auto_adds_required_steps_for_repos() {
-        let mut editor = new_editor();
-        editor.name = LineEdit::new("repos-job");
-        editor.selected_steps.insert("flatpak".to_string());
-        editor
-            .repos
-            .push(crate::domain::repos::RepoEntry::pull_only("/tmp/a"));
-        editor
-            .repos
-            .push(crate::domain::repos::RepoEntry::with_apply(
-                "/tmp/b", "make",
-            ));
-        let profile = editor.to_profile().unwrap();
-        assert!(profile.steps.contains(&"git_repos".to_string()));
-        assert!(profile.steps.contains(&"custom_commands".to_string()));
-
-        let mut editor = new_editor();
-        editor.name = LineEdit::new("plain");
-        editor.selected_steps.insert("flatpak".to_string());
-        let profile = editor.to_profile().unwrap();
-        assert!(!profile.steps.contains(&"git_repos".to_string()));
-    }
-
-    #[test]
-    fn validate_draft_rejects_missing_git_repos() {
-        let mut editor = new_editor();
-        editor.name = LineEdit::new("repos-job");
-        editor.selected_steps.insert("git_repos".to_string());
-        editor
-            .repos
-            .push(crate::domain::repos::RepoEntry::pull_only(
-                "/nonexistent/repo/xyz",
-            ));
-        let profile = editor.to_profile().unwrap();
-        let error = validate_draft(&profile).unwrap_err();
-        assert!(error.contains("not an existing git repository"));
     }
 
     #[test]

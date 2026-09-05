@@ -43,7 +43,7 @@ topmatic reset [--all]   # remove units/schedules/history; --all also archives t
 
 In the TUI: `n` new, `e` edit, `space` pause/resume, `d` delete, `r` run now, `t` dry-run test, `l` logs, `/` filter, mouse click/scroll, `?` help, `q` quit (works in upper or lower case, from any screen). The right pane shows live details for the selected profile: schedule, countdown to next fire, timer state and the tail of the last run log.
 
-Profiles can also track git repositories (bulk-imported by scanning a directory): each repo is pulled by the `git_repos` step and can run an `apply` command after (e.g. `stow` for dotfiles). Profiles with repos are dry-run verified on save and stay paused until the verification passes.
+New profiles start from a preset — everything user-level, dev tools or Flatpak — with steps pre-selected, a suggested name and the default schedule; tweak anything before saving. Presets are computed live from your installed topgrade, so they always match its step list.
 
 ![editor](docs/assets/editor.png)
 

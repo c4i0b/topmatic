@@ -66,7 +66,6 @@ impl Fixture {
 
     fn profile(name: &str, notify: NotifyPolicy) -> Profile {
         Profile {
-            repos: Vec::new(),
             name: name.to_string(),
             steps: vec!["flatpak".to_string(), "cargo".to_string()],
             schedule: Schedule::default(),
@@ -252,61 +251,4 @@ fn run_is_skipped_when_lock_is_already_held() {
         .unwrap()
         .expect("skip is recorded");
     assert!(status.skipped);
-}
-
-#[test]
-fn repos_profiles_use_their_own_topgrade_config() {
-    let fixture = Fixture::new();
-    let mut profile = Fixture::profile("dev-daily", NotifyPolicy::Never);
-    profile.steps = vec!["git_repos".to_string()];
-    profile
-        .repos
-        .push(topmatic::domain::repos::RepoEntry::pull_only("~/dev/tool"));
-    fixture.save_config(&[profile.clone()]);
-    let topgrade = fixture.topgrade();
-
-    let outcome = runner::run(
-        &fixture.stored_profile("dev-daily"),
-        &topgrade,
-        &fixture.paths,
-        &NullNotify,
-        false,
-    )
-    .unwrap();
-    assert!(outcome.success);
-
-    let per_profile = fixture
-        .paths
-        .topgrade_config_file_for(&profile)
-        .to_string_lossy()
-        .into_owned();
-    assert!(per_profile.ends_with("topgrade-dev-daily.toml"));
-    let argv = fixture.argv();
-    assert!(argv.contains(&per_profile), "argv: {argv}");
-    let content =
-        std::fs::read_to_string(fixture.paths.topgrade_config_file_for(&profile)).unwrap();
-    assert!(content.contains("[git]"));
-    assert!(content.contains("\"~/dev/tool\""));
-}
-
-#[test]
-fn verify_gates_repo_profiles_on_dry_run() {
-    let fixture = Fixture::new();
-    let mut profile = Fixture::profile("dev-daily", NotifyPolicy::Never);
-    profile.steps = vec!["git_repos".to_string()];
-    profile
-        .repos
-        .push(topmatic::domain::repos::RepoEntry::pull_only("/tmp"));
-    fixture.save_config(&[profile.clone()]);
-    let topgrade = fixture.topgrade();
-
-    assert!(
-        runner::verify(&profile, &topgrade, &fixture.paths, &NullNotify).is_ok(),
-        "green dry-run must pass the gate"
-    );
-
-    fixture.set_exit_code("7");
-    let error = runner::verify(&profile, &topgrade, &fixture.paths, &NullNotify)
-        .expect_err("failing dry-run must fail the gate");
-    assert!(error.contains("dry-run failed"));
 }

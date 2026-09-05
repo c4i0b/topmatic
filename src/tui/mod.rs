@@ -2,6 +2,7 @@ mod dashboard;
 mod editor;
 mod input;
 mod logs;
+mod presets;
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -16,7 +17,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, ListItem, Paragraph};
 
 use crate::config::{self, AppConfig};
 use crate::domain::profile::NotifyPolicy;
@@ -29,6 +30,7 @@ use input::LineEdit;
 
 pub enum View {
     Dashboard,
+    PresetPicker { index: usize },
     Editor(Box<editor::EditorState>),
     Logs(logs::LogsState),
     Help,
@@ -238,7 +240,7 @@ impl App {
                     self.should_quit = true;
                     return;
                 }
-                View::Logs(_) => {
+                View::Logs(_) | View::PresetPicker { .. } => {
                     self.should_quit = true;
                     return;
                 }
@@ -247,6 +249,38 @@ impl App {
         }
         match std::mem::replace(&mut self.view, View::Dashboard) {
             View::Dashboard => self.handle_dashboard_key(key),
+            View::PresetPicker { index } => {
+                let count = presets::PRESETS.len() + 1;
+                match key.code {
+                    KeyCode::Char('j' | 'J') | KeyCode::Down => {
+                        self.view = View::PresetPicker {
+                            index: (index + 1).min(count - 1),
+                        };
+                    }
+                    KeyCode::Char('k' | 'K') | KeyCode::Up => {
+                        self.view = View::PresetPicker {
+                            index: index.saturating_sub(1),
+                        };
+                    }
+                    KeyCode::Esc => self.view = View::Dashboard,
+                    KeyCode::Enter => {
+                        let editor = if index < presets::PRESETS.len() {
+                            let preset = &presets::PRESETS[index];
+                            let steps = presets::steps_for(index, &self.catalog);
+                            editor::EditorState::from_preset(
+                                index,
+                                self.catalog.clone(),
+                                steps,
+                                preset.suggested_name,
+                            )
+                        } else {
+                            editor::EditorState::new(None, self.catalog.clone())
+                        };
+                        self.view = View::Editor(Box::new(editor));
+                    }
+                    _ => {}
+                }
+            }
             View::Editor(mut state) => match state.handle_key(key) {
                 editor::EditorEvent::Cancel => {
                     self.message.clear();
@@ -294,12 +328,7 @@ impl App {
             KeyCode::Char(c) => match c.to_ascii_lowercase() {
                 '/' => self.filter_editing = true,
                 '?' => self.view = View::Help,
-                'n' => {
-                    self.view = View::Editor(Box::new(editor::EditorState::new(
-                        None,
-                        self.catalog.clone(),
-                    )));
-                }
+                'n' => self.view = View::PresetPicker { index: 0 },
                 'e' => self.open_editor_for_selected(),
                 ' ' => self.toggle_enabled(),
                 'd' => {
@@ -394,19 +423,6 @@ impl App {
         if state.creating && self.config.profile(&profile.name).is_some() {
             self.message = format!("profile {} already exists", profile.name);
             self.view = View::Editor(Box::new(state));
-            return;
-        }
-        let mut profile = profile;
-        if !profile.repos.is_empty()
-            && let Some(topgrade) = self.topgrade_bin.clone()
-            && let Err(error) = runner::verify(&profile, &topgrade, &self.paths, &NullNotify)
-        {
-            profile.enabled = false;
-            self.message = format!("saved paused — {error}");
-            self.config.upsert(profile);
-            let _ = config::save(&self.paths, &self.config);
-            let _ = systemd_sync::sync(&self.config, &self.topmatic_bin, &self.ctl);
-            self.rebuild_rows();
             return;
         }
         self.config.upsert(profile.clone());
@@ -556,6 +572,37 @@ impl App {
 
         self.draw_header(frame, header);
         match &self.view {
+            View::PresetPicker { index } => {
+                let mut items: Vec<ListItem> = presets::PRESETS
+                    .iter()
+                    .enumerate()
+                    .map(|(i, preset)| {
+                        if i == *index {
+                            ListItem::new(Line::styled(
+                                format!("▶ {} — {}", preset.label, preset.description),
+                                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                            ))
+                        } else {
+                            ListItem::new(Line::from(format!(
+                                "  {} — {}",
+                                preset.label, preset.description
+                            )))
+                        }
+                    })
+                    .collect();
+                let scratch_index = presets::PRESETS.len();
+                items.push(ListItem::new(if *index == scratch_index {
+                    Line::styled(
+                        "▶ Start from scratch",
+                        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Line::from("  Start from scratch")
+                }));
+                let list = ratatui::widgets::List::new(items)
+                    .block(Block::bordered().title("new profile — pick a preset"));
+                frame.render_widget(list, body);
+            }
             View::Dashboard => {
                 let areas = dashboard::render(self, frame, body);
                 self.list_area.set(areas.list);
@@ -594,6 +641,7 @@ impl App {
                 View::Editor(_) => {
                     "tab section  space toggle  ←→ adjust  ctrl+s save  esc cancel  q quit"
                 }
+                View::PresetPicker { .. } => "enter choose  esc back  q quit",
                 View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
                 View::Help => "any key closes  q quit",
                 View::Confirm { .. } => "y confirm delete  esc cancels  q quit",
@@ -619,9 +667,8 @@ impl App {
                 .areas(area);
 
         let inner_height = left.height.saturating_sub(2) as usize;
-        let repos_block = 5 + state.repos.len().min(editor::REPOS_VISIBLE);
         let steps_height = inner_height
-            .saturating_sub(2 + repos_block + usize::from(state.steps_filtering))
+            .saturating_sub(3 + usize::from(state.steps_filtering))
             .max(1);
 
         let name_line = Line::from(vec![
@@ -705,46 +752,6 @@ impl App {
                 ),
             ]);
             steps_lines.push(line);
-        }
-
-        let focus_repos = state.section == editor::Section::Repos;
-        steps_lines.push(Line::from(vec![
-            focus_marker(focus_repos),
-            Span::raw(format!(" repos ({}): path: ", state.repos.len())),
-            Span::styled(state.repo_path.value.clone(), Style::new().fg(Color::Cyan)),
-        ]));
-        steps_lines.push(Line::from(vec![
-            Span::raw("  apply (optional): "),
-            Span::styled(state.repo_apply.value.clone(), Style::new().fg(Color::Cyan)),
-        ]));
-        steps_lines.push(Line::from(vec![
-            Span::raw("  scan dir + Enter: "),
-            Span::styled(state.repo_scan.value.clone(), Style::new().fg(Color::Cyan)),
-        ]));
-        let mut repo_scroll = state.repo_scroll;
-        let (repo_start, repo_end) = editor::window_bounds(
-            state.repo_index.saturating_sub(3),
-            state.repos.len(),
-            editor::REPOS_VISIBLE,
-            &mut repo_scroll,
-        );
-        for (offset, repo) in state.repos[repo_start..repo_end].iter().enumerate() {
-            let row = 3 + repo_start + offset;
-            steps_lines.push(Line::from(vec![
-                Span::raw(if focus_repos && state.repo_index == row {
-                    "▶ "
-                } else {
-                    "  "
-                }),
-                Span::raw(repo.path.clone()),
-                Span::styled(
-                    repo.apply
-                        .as_ref()
-                        .map(|apply| format!("  -> {apply}"))
-                        .unwrap_or_default(),
-                    Style::new().fg(Color::Yellow),
-                ),
-            ]));
         }
 
         let left_block = Paragraph::new(

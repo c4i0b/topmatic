@@ -135,6 +135,48 @@ impl Schedule {
     }
 }
 
+pub fn quick_choices() -> Vec<(&'static str, Schedule)> {
+    vec![
+        (
+            "daily with random jitter",
+            Schedule {
+                preset: SchedulePreset::Spread {
+                    period: SpreadPeriod::Daily,
+                },
+                randomized_delay_sec: SPREAD_DELAY_SEC,
+            },
+        ),
+        (
+            "daily at a fixed time",
+            Schedule {
+                preset: SchedulePreset::Daily {
+                    hour: 12,
+                    minute: 0,
+                },
+                randomized_delay_sec: 0,
+            },
+        ),
+        (
+            "weekly",
+            Schedule {
+                preset: SchedulePreset::Weekly {
+                    weekday: Weekday::Mon,
+                    hour: 12,
+                    minute: 0,
+                },
+                randomized_delay_sec: 900,
+            },
+        ),
+        (
+            "every 6 hours",
+            Schedule {
+                preset: SchedulePreset::EveryNHours { hours: 6 },
+                randomized_delay_sec: 900,
+            },
+        ),
+    ]
+}
+
 pub fn format_delay(seconds: u64) -> String {
     if seconds >= 3600 && seconds.is_multiple_of(3600) {
         format!("{}h", seconds / 3600)
@@ -252,6 +294,18 @@ mod tests {
         assert!(text.contains("period = \"daily\""));
         let back: Schedule = toml::from_str(&text).unwrap();
         assert_eq!(schedule, back);
+    }
+
+    #[test]
+    fn quick_choices_offer_distinct_schedules() {
+        let choices = quick_choices();
+        assert!(choices.len() >= 4);
+        let summaries: Vec<String> = choices.iter().map(|(_, s)| s.summary()).collect();
+        let mut unique = summaries.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), summaries.len());
+        assert_eq!(choices[0].1, Schedule::default());
     }
 
     #[test]

@@ -350,7 +350,6 @@ mod tests {
 
     fn profile(name: &str, enabled: bool) -> Profile {
         Profile {
-            repos: Vec::new(),
             name: name.to_string(),
             steps: vec!["flatpak".to_string()],
             schedule: Schedule {

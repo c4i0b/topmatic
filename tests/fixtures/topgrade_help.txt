@@ -1,0 +1,112 @@
+Usage: topgrade [OPTIONS]
+
+Options:
+      --edit-config
+          Edit the configuration file
+
+      --config-reference
+          Show config reference
+
+  -t, --tmux
+          Run inside tmux
+
+      --no-tmux
+          Don't run inside tmux
+
+  -c, --cleanup
+          Cleanup temporary or old files
+
+  -n, --dry-run
+          Print what would be done
+          
+          Alias for --run-type dry
+
+  -r, --run-type <RUN_TYPE>
+          Pick between just running commands, running and logging commands, and just logging commands
+
+          Possible values:
+          - dry:  Executing commands will just print the command with its argument
+          - wet:  Executing commands will perform actual execution
+          - damp: Executing commands will print the command and perform actual execution
+          
+          [default: wet]
+
+      --no-ask-retry
+          Do not ask what to do after a step fails
+
+      --auto-retry <COUNT>
+          Automatically retry failed steps up to COUNT times
+
+      --disable <STEP>...
+          Do not perform upgrades for the given steps
+          
+          [possible values: am, android_studio, antigravity, app_man, aqua, asdf, atom, atuin, audit, auto_cpufreq, bin, bob, brew_cask, brew_formula, bun, bun_packages, cargo, certbot, chezmoi, chocolatey, choosenim, cinnamon_spices, clam_av_db, claude_code, claude_code_plugins, codex, colima, composer, conda, config_update, containers, cursor, cursor_agent, custom_commands, deb_get, deno, distrobox, dkp_pacman, dotnet, elan, emacs, falconf, firmware, flatpak, flutter, fossil, gcloud, gearlever, gem, getnf, ghcup, git_repos, github_cli_extensions, gnome_shell_extensions, go, guix, haxelib, helix, helix_db, helm, home_manager, hyprpm, install_release, jetbrains_aqua, jetbrains_clion, jetbrains_datagrip, jetbrains_dataspell, jetbrains_gateway, jetbrains_goland, jetbrains_idea, jetbrains_mps, jetbrains_phpstorm, jetbrains_pycharm, jetbrains_rider, jetbrains_rubymine, jetbrains_rustrover, jetbrains_toolbox, jetbrains_webstorm, jetpack, julia, juliaup, kakoune, krew, lensfun, lure, macports, mamba, mandb, mas, maza, micro, microsoft_office, microsoft_store, miktex, mise, myrepos, nix, nix_helper, node, ollama, opam, opencode, pacdef, pacstall, pearl, pi, pip3, pip_review, pip_review_local, pipupgrade, pipx, pipxu, pixi, pkg, pkgfile, pkgin, pkgit, platformio_core, pnpm, poetry, powershell, protonplus, protonup, pyenv, raco, rcm, remotes, restarts, rtcl, ruby_gems, rustup, rye, scoop, sdkman, self_update, sera, sheldon, shell, skills, snap, soar, sparkle, spicetify, stack, stew, system, tldr, tlmgr, tmux, toolbx, tpack, typst, uv, vagrant, vcpkg, vim, vite_plus, volta_packages, vscode, vscode_insiders, vscodium, vscodium_insiders, waydroid, windsurf, winget, wsl, wsl_update, xcodes, yadm, yarn, yazi, zerobrew, zigup, zvm]
+
+      --only <STEP>...
+          Perform only the specified steps
+          
+          [possible values: am, android_studio, antigravity, app_man, aqua, asdf, atom, atuin, audit, auto_cpufreq, bin, bob, brew_cask, brew_formula, bun, bun_packages, cargo, certbot, chezmoi, chocolatey, choosenim, cinnamon_spices, clam_av_db, claude_code, claude_code_plugins, codex, colima, composer, conda, config_update, containers, cursor, cursor_agent, custom_commands, deb_get, deno, distrobox, dkp_pacman, dotnet, elan, emacs, falconf, firmware, flatpak, flutter, fossil, gcloud, gearlever, gem, getnf, ghcup, git_repos, github_cli_extensions, gnome_shell_extensions, go, guix, haxelib, helix, helix_db, helm, home_manager, hyprpm, install_release, jetbrains_aqua, jetbrains_clion, jetbrains_datagrip, jetbrains_dataspell, jetbrains_gateway, jetbrains_goland, jetbrains_idea, jetbrains_mps, jetbrains_phpstorm, jetbrains_pycharm, jetbrains_rider, jetbrains_rubymine, jetbrains_rustrover, jetbrains_toolbox, jetbrains_webstorm, jetpack, julia, juliaup, kakoune, krew, lensfun, lure, macports, mamba, mandb, mas, maza, micro, microsoft_office, microsoft_store, miktex, mise, myrepos, nix, nix_helper, node, ollama, opam, opencode, pacdef, pacstall, pearl, pi, pip3, pip_review, pip_review_local, pipupgrade, pipx, pipxu, pixi, pkg, pkgfile, pkgin, pkgit, platformio_core, pnpm, poetry, powershell, protonplus, protonup, pyenv, raco, rcm, remotes, restarts, rtcl, ruby_gems, rustup, rye, scoop, sdkman, self_update, sera, sheldon, shell, skills, snap, soar, sparkle, spicetify, stack, stew, system, tldr, tlmgr, tmux, toolbx, tpack, typst, uv, vagrant, vcpkg, vim, vite_plus, volta_packages, vscode, vscode_insiders, vscodium, vscodium_insiders, waydroid, windsurf, winget, wsl, wsl_update, xcodes, yadm, yarn, yazi, zerobrew, zigup, zvm]
+
+      --custom-commands <NAME>...
+          Run only specific custom commands
+
+      --env <NAME=VALUE>...
+          Set environment variables
+
+  -v, --verbose
+          Output debug logs. Alias for `--log-filter debug`
+
+  -k, --keep
+          Prompt for a key before exiting
+
+      --notify-end <NOTIFY_END>
+          When to send a notification at the end of a run
+
+          Possible values:
+          - always:     Always send a notification (default)
+          - never:      Never send a notification
+          - on_failure: Only send a notification if there were failures
+          
+          [default: always]
+
+  -y, --yes [<STEP>...]
+          Say yes to package manager's prompt
+          
+          [possible values: am, android_studio, antigravity, app_man, aqua, asdf, atom, atuin, audit, auto_cpufreq, bin, bob, brew_cask, brew_formula, bun, bun_packages, cargo, certbot, chezmoi, chocolatey, choosenim, cinnamon_spices, clam_av_db, claude_code, claude_code_plugins, codex, colima, composer, conda, config_update, containers, cursor, cursor_agent, custom_commands, deb_get, deno, distrobox, dkp_pacman, dotnet, elan, emacs, falconf, firmware, flatpak, flutter, fossil, gcloud, gearlever, gem, getnf, ghcup, git_repos, github_cli_extensions, gnome_shell_extensions, go, guix, haxelib, helix, helix_db, helm, home_manager, hyprpm, install_release, jetbrains_aqua, jetbrains_clion, jetbrains_datagrip, jetbrains_dataspell, jetbrains_gateway, jetbrains_goland, jetbrains_idea, jetbrains_mps, jetbrains_phpstorm, jetbrains_pycharm, jetbrains_rider, jetbrains_rubymine, jetbrains_rustrover, jetbrains_toolbox, jetbrains_webstorm, jetpack, julia, juliaup, kakoune, krew, lensfun, lure, macports, mamba, mandb, mas, maza, micro, microsoft_office, microsoft_store, miktex, mise, myrepos, nix, nix_helper, node, ollama, opam, opencode, pacdef, pacstall, pearl, pi, pip3, pip_review, pip_review_local, pipupgrade, pipx, pipxu, pixi, pkg, pkgfile, pkgin, pkgit, platformio_core, pnpm, poetry, powershell, protonplus, protonup, pyenv, raco, rcm, remotes, restarts, rtcl, ruby_gems, rustup, rye, scoop, sdkman, self_update, sera, sheldon, shell, skills, snap, soar, sparkle, spicetify, stack, stew, system, tldr, tlmgr, tmux, toolbx, tpack, typst, uv, vagrant, vcpkg, vim, vite_plus, volta_packages, vscode, vscode_insiders, vscodium, vscodium_insiders, waydroid, windsurf, winget, wsl, wsl_update, xcodes, yadm, yarn, yazi, zerobrew, zigup, zvm]
+
+      --disable-predefined-git-repos
+          Don't pull the predefined git repos
+
+      --config <PATH>
+          Alternative configuration file
+
+      --remote-host-limit <REGEX>
+          A regular expression for restricting remote host execution
+
+      --show-skipped
+          Show the reason for skipped steps
+
+      --allow-root
+          Suppress warning and confirmation prompt if running as root
+
+      --sudoloop
+          Periodically run `sudo -v` to avoid password re-prompts during updates
+
+      --sudoloop-interval <SECONDS>
+          Interval in seconds between `sudo -v` invocations when --sudoloop is active (default: 240)
+
+      --log-filter <LOG_FILTER>
+          Tracing filter directives.
+          
+          See: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives
+          
+          [default: warn]
+
+      --no-self-update
+          Don't update Topgrade
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

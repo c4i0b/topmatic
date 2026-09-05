@@ -24,6 +24,7 @@ pub struct SyncReport {
     pub updated_profiles: Vec<String>,
     pub pruned_drop_ins: Vec<String>,
     pub removed_orphans: Vec<String>,
+    pub ignored_foreign: Vec<String>,
     pub reloaded: bool,
     pub errors: Vec<String>,
 }
@@ -63,10 +64,25 @@ pub fn sync(
 
     let known: BTreeSet<String> = sync_profiles(config, &unit_dir, ctl, &mut report);
 
+    let instances: BTreeSet<String> = ctl.instances().into_iter().collect();
     let mut orphans: BTreeSet<String> = BTreeSet::new();
+    let mut foreign: BTreeSet<String> = BTreeSet::new();
+    for instance in &instances {
+        if known.contains(instance) {
+            continue;
+        }
+        if is_managed_timer(&unit_dir, instance) {
+            orphans.insert(instance.clone());
+        } else {
+            foreign.insert(instance.clone());
+        }
+    }
     remove_orphan_drop_ins(&unit_dir, &known, &mut orphans);
-    remove_orphan_timers(&known, ctl, &mut orphans);
+    for orphan in orphans.intersection(&instances) {
+        let _ = ctl.disable_timer(orphan);
+    }
     report.removed_orphans = orphans.into_iter().collect();
+    report.ignored_foreign = foreign.into_iter().collect();
 
     let changed_anything = report.templates_installed
         || !report.updated_profiles.is_empty()
@@ -170,18 +186,11 @@ fn remove_orphan_drop_ins(
     }
 }
 
-fn remove_orphan_timers(
-    known: &BTreeSet<String>,
-    ctl: &dyn SystemdCtl,
-    orphans: &mut BTreeSet<String>,
-) {
-    for instance in ctl.instances() {
-        if known.contains(&instance) {
-            continue;
-        }
-        let _ = ctl.disable_timer(&instance);
-        orphans.insert(instance);
-    }
+fn is_managed_timer(unit_dir: &std::path::Path, instance: &str) -> bool {
+    unit_dir
+        .join(units::drop_in_dir(instance))
+        .join(units::SCHEDULE_DROP_IN)
+        .is_file()
 }
 
 pub fn purge_profile_state(paths: &Paths, profile: &str) -> io::Result<()> {
@@ -447,6 +456,60 @@ mod tests {
         assert!(!orphan_dir.exists());
         assert_eq!(report.removed_orphans, vec!["old"]);
         assert!(ctl.calls().contains(&"disable:old".to_string()));
+        assert!(report.ignored_foreign.is_empty());
+    }
+
+    #[test]
+    fn foreign_timer_without_drop_in_is_left_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctl = FakeCtl::new(tmp.path().to_path_buf());
+        ctl.existing_instances = vec!["foreign-job".to_string()];
+
+        let config = config_of(&[profile("alpha")]);
+        let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
+
+        assert_eq!(report.ignored_foreign, vec!["foreign-job"]);
+        assert!(report.removed_orphans.is_empty());
+        assert!(!ctl.calls().contains(&"disable:foreign-job".to_string()));
+    }
+
+    #[test]
+    fn foreign_unit_does_not_mark_sync_dirty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctl = FakeCtl::new(tmp.path().to_path_buf());
+        let config = config_of(&[profile("alpha")]);
+
+        sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
+        ctl.existing_instances = vec!["alpha".to_string(), "foreign-job".to_string()];
+
+        let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
+
+        assert_eq!(report.ignored_foreign, vec!["foreign-job"]);
+        assert!(
+            report.is_clean(),
+            "a foreign timer is not topmatic's business and must not count as drift"
+        );
+        assert!(!report.removed_orphans.iter().any(|o| o == "foreign-job"));
+    }
+
+    #[test]
+    fn stray_drop_in_dir_without_timer_is_still_cleaned() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stray_dir = tmp.path().join("topmatic@gone.timer.d");
+        fs::create_dir_all(&stray_dir).unwrap();
+        fs::write(stray_dir.join("10-schedule.conf"), "[Timer]\n").unwrap();
+        let ctl = FakeCtl::new(tmp.path().to_path_buf());
+
+        let config = config_of(&[profile("alpha")]);
+        let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
+
+        assert!(!stray_dir.exists());
+        assert_eq!(report.removed_orphans, vec!["gone"]);
+        assert!(
+            !ctl.calls().contains(&"disable:gone".to_string()),
+            "no enabled timer means nothing to disable"
+        );
+        assert!(report.ignored_foreign.is_empty());
     }
 
     #[test]

@@ -125,6 +125,9 @@ fn cmd_doctor() -> anyhow::Result<()> {
     for orphan in &report.removed_orphans {
         println!("ok:   removed orphan timer {orphan}");
     }
+    for foreign in &report.ignored_foreign {
+        println!("info: left foreign timer {foreign} untouched");
+    }
     for error in &report.errors {
         failures += 1;
         println!("FAIL: {error}");
@@ -248,7 +251,7 @@ fn cmd_edit() -> anyhow::Result<()> {
         std::fs::write(
             paths.config_file(),
             "# topmatic configuration.\n\
-             # Add profiles with `topmatic add` or the TUI; hand-editing is supported.\n\
+             # Add profiles with the TUI (or hand-edit below); topmatic reconciles systemd on next open.\n\
              #\n\
              # Example:\n\
              # [[profiles]]\n\
@@ -301,6 +304,9 @@ fn cmd_sync() -> anyhow::Result<()> {
     }
     for orphan in &report.removed_orphans {
         println!("removed orphan timer {orphan}");
+    }
+    for foreign in &report.ignored_foreign {
+        println!("left foreign timer {foreign} untouched");
     }
     for error in &report.errors {
         eprintln!("error: {error}");

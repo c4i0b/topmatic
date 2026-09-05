@@ -120,7 +120,7 @@ impl App {
         let report = systemd_sync::sync(&app.config, &app.topmatic_bin, &app.ctl);
         app.message = if report.errors.is_empty() {
             format!(
-                "synced{}{}{}",
+                "synced{}{}{}{}",
                 if report.templates_installed {
                     ", installed unit templates"
                 } else {
@@ -138,6 +138,14 @@ impl App {
                     String::new()
                 } else {
                     format!(", removed {} orphan(s)", report.removed_orphans.len())
+                },
+                if report.ignored_foreign.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        ", left {} foreign timer(s) untouched",
+                        report.ignored_foreign.len()
+                    )
                 }
             )
         } else {
@@ -588,7 +596,7 @@ impl App {
         let linger = match self.ctl.linger_enabled() {
             Some(true) => Span::styled("linger: on", Style::new().fg(Color::Green)),
             Some(false) => {
-                Span::styled("linger: off (L to enable)", Style::new().fg(Color::Yellow))
+                Span::styled("linger: off (g to enable)", Style::new().fg(Color::Yellow))
             }
             None => Span::raw(""),
         };

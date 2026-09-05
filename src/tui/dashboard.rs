@@ -166,12 +166,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
                     Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
                 )
             } else {
-                Line::from(vec![
-                    Span::raw("  "),
-                    state_marker(row),
-                    Span::raw(" "),
-                    Span::raw(row.name.clone()),
-                ])
+                Line::from(format!("  {}", row.name))
             };
             ListItem::new(line)
         })

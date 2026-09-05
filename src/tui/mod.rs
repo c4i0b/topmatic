@@ -21,7 +21,6 @@ use ratatui::widgets::{Block, Clear, ListItem, Paragraph};
 
 use crate::config::{self, AppConfig};
 use crate::domain::profile::NotifyPolicy;
-use crate::domain::steps::{FALLBACK_STEPS, StepEntry, curated_category};
 use crate::paths::Paths;
 use crate::runner::{self, RunOutcome, notify::NullNotify, read_status};
 use crate::systemd::{RealSystemdCtl, SystemdCtl, sync as systemd_sync};
@@ -43,7 +42,7 @@ pub struct App {
     pub ctl: RealSystemdCtl,
     pub topmatic_bin: PathBuf,
     pub topgrade_bin: Option<PathBuf>,
-    pub catalog: Vec<StepEntry>,
+    pub catalog: Vec<String>,
     pub view: View,
     pub selected: usize,
     pub rows: Vec<dashboard::ProfileRow>,
@@ -158,7 +157,7 @@ impl App {
         Ok(app)
     }
 
-    fn load_catalog(&self) -> Vec<StepEntry> {
+    fn load_catalog(&self) -> Vec<String> {
         if let Some(bin) = &self.topgrade_bin
             && let Ok(output) = std::process::Command::new(bin).arg("--help").output()
             && output.status.success()
@@ -166,13 +165,7 @@ impl App {
             let text = String::from_utf8_lossy(&output.stdout);
             return crate::domain::steps::catalog(&text);
         }
-        FALLBACK_STEPS
-            .iter()
-            .map(|id| StepEntry {
-                id: id.to_string(),
-                category: curated_category(id),
-            })
-            .collect()
+        presets::fallback_catalog()
     }
 
     pub fn rebuild_rows(&mut self) {
@@ -263,7 +256,6 @@ impl App {
                             let preset = &presets::PRESETS[index];
                             let steps = presets::steps_for(index, &self.catalog);
                             editor::EditorState::from_preset(
-                                index,
                                 self.catalog.clone(),
                                 steps,
                                 preset.suggested_name,
@@ -401,7 +393,7 @@ impl App {
     }
 
     fn save_profile(&mut self, state: editor::EditorState) {
-        let profile = match state.to_profile() {
+        let profile = match state.to_profile(&state.final_name()) {
             Ok(profile) => profile,
             Err(error) => {
                 self.message = error;
@@ -414,7 +406,15 @@ impl App {
             self.view = View::Editor(Box::new(state));
             return;
         }
-        if state.creating && self.config.profile(&profile.name).is_some() {
+        let renamed_from = state
+            .original_name
+            .clone()
+            .filter(|original| *original != profile.name);
+        if let Some(original) = &renamed_from {
+            self.config.remove(original);
+            let _ = crate::systemd::sync::purge_profile_state(&self.paths, original);
+        }
+        if self.config.profile(&profile.name).is_some() {
             self.message = format!("profile {} already exists", profile.name);
             self.view = View::Editor(Box::new(state));
             return;
@@ -614,9 +614,7 @@ impl App {
                 View::Dashboard => {
                     "/ filter  n new  e edit  d delete  r run  t test  l logs  g linger  s resync  ? help  q quit"
                 }
-                View::Editor(_) => {
-                    "tab section  space toggle  ←→ adjust  ctrl+s save  esc cancel  q quit"
-                }
+                View::Editor(_) => "tab section  enter save  / filter steps  esc cancel  q quit",
                 View::PresetPicker { .. } => "enter choose  esc back  q quit",
                 View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
                 View::Help => "any key closes  q quit",
@@ -644,21 +642,13 @@ impl App {
 
         let inner_height = left.height.saturating_sub(2) as usize;
         let steps_height = inner_height
-            .saturating_sub(3 + usize::from(state.steps_filtering))
+            .saturating_sub(2 + usize::from(state.steps_filtering))
             .max(1);
 
-        let name_line = Line::from(vec![
-            focus_marker(state.section == editor::Section::Name),
-            Span::raw(" name: "),
-            Span::styled(
-                if state.creating {
-                    state.name.value.clone()
-                } else {
-                    state.name.value.clone() + " (fixed)"
-                },
-                Style::new().fg(Color::Cyan),
-            ),
-        ]);
+        let title = match &state.original_name {
+            Some(name) => format!("edit profile — {name}"),
+            None => "new profile".to_string(),
+        };
 
         let steps_total = state.filtered_steps().len();
         let mut steps_scroll = state.steps_scroll;
@@ -684,10 +674,6 @@ impl App {
                 filter_label
             )),
         ])];
-        steps_lines.push(Line::from(vec![
-            Span::styled("  green ", Style::new().fg(Color::Green)),
-            Span::raw("= user-level family (sorted first)  white = everything else"),
-        ]));
         if state.steps_filtering {
             steps_lines.push(Line::from(Span::styled(
                 format!("  {}▏", state.filter.value),
@@ -699,7 +685,7 @@ impl App {
             .enumerate()
         {
             let index = steps_start + offset;
-            let marker = if state.selected_steps.contains(&entry.id) {
+            let marker = if state.selected_steps.contains(*entry) {
                 "[x]"
             } else {
                 "[ ]"
@@ -711,32 +697,32 @@ impl App {
                     "  "
                 }),
                 Span::raw(format!("{marker} ")),
-                Span::styled(
-                    entry.id.clone(),
-                    if entry.category.is_some() {
-                        Style::new().fg(Color::Green)
-                    } else {
-                        Style::new()
-                    },
-                ),
-                Span::styled(
-                    entry
-                        .category
-                        .map(|c| format!("  ({c})"))
-                        .unwrap_or_default(),
-                    Style::new().fg(Color::DarkGray),
-                ),
+                Span::raw(entry.as_str()),
             ]);
             steps_lines.push(line);
         }
 
-        let left_block = Paragraph::new(
-            std::iter::once(name_line)
-                .chain(steps_lines)
-                .collect::<Vec<_>>(),
-        )
-        .block(Block::bordered().title("profile"));
+        let left_block = Paragraph::new(steps_lines).block(Block::bordered().title(title));
         frame.render_widget(left_block, left);
+
+        if let Some(popup) = &state.name_popup {
+            let popup_area = centered_rect(area, 60, 5);
+            let text = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw(" name: "),
+                    Span::styled(popup.value.clone(), Style::new().fg(Color::Cyan)),
+                    Span::raw("▏"),
+                ]),
+                Line::from(Span::styled(
+                    " enter saves · esc back",
+                    Style::new().fg(Color::DarkGray),
+                )),
+            ])
+            .block(Block::bordered().title("save profile"));
+            frame.render_widget(Clear, popup_area);
+            frame.render_widget(text, popup_area);
+        }
 
         let mut right_lines: Vec<Line> = Vec::new();
         let focus = state.section == editor::Section::Schedule;
@@ -771,16 +757,7 @@ impl App {
                 Span::raw(text.clone()),
             ]));
         }
-        right_lines.push(Line::from(""));
-        let focus = state.section == editor::Section::Actions;
-        right_lines.push(Line::from(vec![
-            focus_marker(focus),
-            Span::raw(if state.action_index == 0 {
-                "  <Save>   Cancel"
-            } else {
-                "   Save  <Cancel>"
-            }),
-        ]));
+
         let right_block = Paragraph::new(right_lines).block(Block::bordered().title("settings"));
         frame.render_widget(right_block, right);
     }

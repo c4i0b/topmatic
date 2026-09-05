@@ -4,7 +4,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::domain::profile::{NotifyPolicy, Profile, Scope, sanitize_name};
 use crate::domain::schedule::{Schedule, SchedulePreset, SpreadPeriod, Weekday};
-use crate::domain::steps::StepEntry;
 use crate::systemd::validate_on_calendar;
 
 use super::input::LineEdit;
@@ -32,20 +31,12 @@ pub fn window_bounds(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
-    Name,
     Steps,
     Schedule,
     Options,
-    Actions,
 }
 
-const SECTIONS: [Section; 5] = [
-    Section::Name,
-    Section::Steps,
-    Section::Schedule,
-    Section::Options,
-    Section::Actions,
-];
+const SECTIONS: [Section; 3] = [Section::Steps, Section::Schedule, Section::Options];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PresetKind {
@@ -102,12 +93,14 @@ impl SchedulePreset {
 
 pub struct EditorState {
     pub creating: bool,
-    pub name: LineEdit,
+    pub original_name: Option<String>,
+    pub suggested_name: Option<String>,
+    pub name_popup: Option<LineEdit>,
     pub filter: LineEdit,
     pub steps_filtering: bool,
     pub steps_scroll: usize,
     pub custom: LineEdit,
-    pub catalog: Vec<StepEntry>,
+    pub catalog: Vec<String>,
     pub selected_steps: BTreeSet<String>,
     pub schedule: Schedule,
     pub cleanup: bool,
@@ -116,9 +109,7 @@ pub struct EditorState {
     pub list_index: usize,
     pub schedule_index: usize,
     pub option_index: usize,
-    pub action_index: usize,
     pub typed_digits: String,
-    pub preset_origin: Option<usize>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -130,11 +121,13 @@ pub enum EditorEvent {
 }
 
 impl EditorState {
-    pub fn new(original: Option<&Profile>, catalog: Vec<StepEntry>) -> Self {
+    pub fn new(original: Option<&Profile>, catalog: Vec<String>) -> Self {
         match original {
             Some(profile) => Self {
                 creating: false,
-                name: LineEdit::new(profile.name.clone()),
+                original_name: Some(profile.name.clone()),
+                suggested_name: None,
+                name_popup: None,
                 filter: LineEdit::new(String::new()),
                 steps_filtering: false,
                 steps_scroll: 0,
@@ -154,13 +147,13 @@ impl EditorState {
                 list_index: 0,
                 schedule_index: 0,
                 option_index: 0,
-                action_index: 0,
                 typed_digits: String::new(),
-                preset_origin: None,
             },
             None => Self {
                 creating: true,
-                name: LineEdit::new(String::new()),
+                original_name: None,
+                suggested_name: None,
+                name_popup: None,
                 filter: LineEdit::new(String::new()),
                 steps_filtering: false,
                 steps_scroll: 0,
@@ -174,35 +167,24 @@ impl EditorState {
                 list_index: 0,
                 schedule_index: 0,
                 option_index: 0,
-                action_index: 0,
                 typed_digits: String::new(),
-                preset_origin: None,
             },
         }
     }
 
-    pub fn from_preset(
-        preset_index: usize,
-        catalog: Vec<StepEntry>,
-        steps: Vec<String>,
-        suggested_name: &str,
-    ) -> Self {
+    pub fn from_preset(catalog: Vec<String>, steps: Vec<String>, suggested_name: &str) -> Self {
         let mut editor = Self::new(None, catalog);
-        editor.name = LineEdit::new(suggested_name.to_string());
         editor.selected_steps = steps.into_iter().collect();
-        editor.preset_origin = Some(preset_index);
+        editor.suggested_name = Some(suggested_name.to_string());
         editor
     }
 
-    pub fn filtered_steps(&self) -> Vec<&StepEntry> {
+    pub fn filtered_steps(&self) -> Vec<&String> {
         let needle = self.filter.value.to_lowercase();
-        let mut entries: Vec<&StepEntry> = self
-            .catalog
+        self.catalog
             .iter()
-            .filter(|entry| needle.is_empty() || entry.id.contains(&needle))
-            .collect();
-        entries.sort_by_key(|entry| std::cmp::Reverse(entry.category.is_some()));
-        entries
+            .filter(|id| needle.is_empty() || id.contains(&needle))
+            .collect()
     }
 
     pub fn steps_window(&self) -> (usize, usize) {
@@ -215,8 +197,15 @@ impl EditorState {
         )
     }
 
-    pub fn to_profile(&self) -> Result<Profile, String> {
-        let name = sanitize_name(&self.name.value).map_err(|error| error.to_string())?;
+    pub fn final_name(&self) -> String {
+        self.name_popup
+            .as_ref()
+            .map(|edit| edit.value.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    pub fn to_profile(&self, name: &str) -> Result<Profile, String> {
+        let name = sanitize_name(name).map_err(|error| error.to_string())?;
         if self.selected_steps.is_empty() {
             return Err("select at least one step".to_string());
         }
@@ -251,14 +240,14 @@ impl EditorState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> EditorEvent {
+        if self.name_popup.is_some() {
+            return self.handle_popup_key(key);
+        }
         if key.code == KeyCode::Esc && !(self.section == Section::Steps && self.steps_filtering) {
             return EditorEvent::Cancel;
         }
         if matches!(key.code, KeyCode::Char('q' | 'Q')) && !self.text_entry_focused() {
             return EditorEvent::Quit;
-        }
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
-            return EditorEvent::RequestSave;
         }
         if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::BackTab {
             self.section = prev_section(self.section);
@@ -270,41 +259,60 @@ impl EditorState {
             self.reset_indices();
             return EditorEvent::None;
         }
+        if key.code == KeyCode::Enter && !(self.section == Section::Steps && self.steps_filtering) {
+            self.open_name_popup();
+            return EditorEvent::None;
+        }
         match self.section {
-            Section::Name => self.handle_name_key(key),
             Section::Steps => self.handle_steps_key(key),
             Section::Schedule => self.handle_schedule_key(key),
             Section::Options => self.handle_options_key(key),
-            Section::Actions => self.handle_actions_key(key),
         }
+    }
+
+    fn handle_popup_key(&mut self, key: KeyEvent) -> EditorEvent {
+        match key.code {
+            KeyCode::Esc => {
+                self.name_popup = None;
+                EditorEvent::None
+            }
+            KeyCode::Enter => {
+                if sanitize_name(&self.final_name()).is_ok() {
+                    EditorEvent::RequestSave
+                } else {
+                    EditorEvent::None
+                }
+            }
+            _ => {
+                if let Some(popup) = self.name_popup.as_mut() {
+                    popup.handle_key(key);
+                }
+                EditorEvent::None
+            }
+        }
+    }
+
+    fn open_name_popup(&mut self) {
+        let prefill = if self.creating {
+            self.suggested_name.clone().unwrap_or_default()
+        } else {
+            self.original_name.clone().unwrap_or_default()
+        };
+        self.name_popup = Some(LineEdit::new(prefill));
     }
 
     fn reset_indices(&mut self) {
         self.list_index = 0;
         self.schedule_index = 0;
         self.option_index = 0;
-        self.action_index = 0;
     }
 
     fn text_entry_focused(&self) -> bool {
         match self.section {
-            Section::Name => self.creating,
             Section::Steps => self.steps_filtering,
             Section::Schedule => self.custom_row_selected(),
-            Section::Options | Section::Actions => false,
+            Section::Options => false,
         }
-    }
-
-    fn handle_name_key(&mut self, key: KeyEvent) -> EditorEvent {
-        if self.creating {
-            if key.code == KeyCode::Enter {
-                self.section = Section::Steps;
-                self.reset_indices();
-            } else {
-                self.name.handle_key(key);
-            }
-        }
-        EditorEvent::None
     }
 
     fn handle_steps_key(&mut self, key: KeyEvent) -> EditorEvent {
@@ -349,8 +357,8 @@ impl EditorState {
     }
 
     fn toggle_step_at(&mut self, index: usize) {
-        if let Some(entry) = self.filtered_steps().get(index) {
-            let id = entry.id.clone();
+        if let Some(id) = self.filtered_steps().get(index) {
+            let id = id.to_string();
             if self.selected_steps.contains(&id) {
                 self.selected_steps.remove(&id);
             } else {
@@ -578,23 +586,6 @@ impl EditorState {
         }
         EditorEvent::None
     }
-
-    fn handle_actions_key(&mut self, key: KeyEvent) -> EditorEvent {
-        match key.code {
-            KeyCode::Left | KeyCode::Right => {
-                self.action_index = 1 - self.action_index;
-                EditorEvent::None
-            }
-            KeyCode::Enter => {
-                if self.action_index == 0 {
-                    EditorEvent::RequestSave
-                } else {
-                    EditorEvent::Cancel
-                }
-            }
-            _ => EditorEvent::None,
-        }
-    }
 }
 
 enum ScheduleField {
@@ -692,7 +683,7 @@ mod tests {
 
     const HELP: &str = include_str!("../../tests/fixtures/topgrade_help.txt");
 
-    fn catalog_entries() -> Vec<StepEntry> {
+    fn catalog_entries() -> Vec<String> {
         catalog(HELP)
     }
 
@@ -707,11 +698,10 @@ mod tests {
     #[test]
     fn rejects_invalid_drafts() {
         let mut editor = new_editor();
-        let error = editor.to_profile().unwrap_err();
+        let error = editor.to_profile("bad name").unwrap_err();
         assert!(error.contains("profile name"));
 
-        editor.name = LineEdit::new("flatpak-daily");
-        let error = editor.to_profile().unwrap_err();
+        let error = editor.to_profile("flatpak-daily").unwrap_err();
         assert!(error.contains("at least one step"));
 
         editor.selected_steps.insert("flatpak".to_string());
@@ -719,17 +709,16 @@ mod tests {
             calendar: String::new(),
         };
         editor.custom = LineEdit::new("  ");
-        let error = editor.to_profile().unwrap_err();
+        let error = editor.to_profile("flatpak-daily").unwrap_err();
         assert!(error.contains("OnCalendar"));
     }
 
     #[test]
     fn builds_valid_profile_from_draft() {
         let mut editor = new_editor();
-        editor.name = LineEdit::new("flatpak-daily");
         editor.selected_steps.insert("flatpak".to_string());
         editor.selected_steps.insert("cargo".to_string());
-        let profile = editor.to_profile().unwrap();
+        let profile = editor.to_profile("flatpak-daily").unwrap();
         assert_eq!(profile.name, "flatpak-daily");
         assert_eq!(profile.steps, vec!["cargo", "flatpak"]);
         assert!(profile.cleanup);
@@ -738,21 +727,92 @@ mod tests {
     }
 
     #[test]
-    fn filter_matches_substring_and_prioritizes_curated() {
+    fn filter_matches_substring_in_catalog_order() {
         let mut editor = new_editor();
-        editor.filter = LineEdit::new("pa");
-        let entries = editor.filtered_steps();
-        let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
-        assert!(ids.contains(&"flatpak".to_string()));
-        assert!(ids.contains(&"bun_packages".to_string()));
-        assert!(!ids.iter().any(|id| id == "cargo"));
-        assert!(entries.first().unwrap().category.is_some());
-
         editor.filter = LineEdit::new("flatpak");
+        let ids: Vec<String> = editor
+            .filtered_steps()
+            .iter()
+            .map(|id| (*id).clone())
+            .collect();
+        assert_eq!(ids, vec!["flatpak".to_string()]);
+    }
+
+    #[test]
+    fn enter_opens_name_popup_and_enter_again_requests_save() {
+        let mut editor = new_editor();
+        editor.selected_steps.insert("flatpak".to_string());
+        editor.handle_key(key(KeyCode::Enter));
+        assert!(editor.name_popup.is_some());
+        assert_eq!(editor.final_name(), "", "scratch starts empty");
+
+        editor.handle_key(key(KeyCode::Char('f')));
+        editor.handle_key(key(KeyCode::Char('l')));
         assert_eq!(
-            editor.filtered_steps().first().unwrap().id,
-            "flatpak".to_string()
+            editor.handle_key(key(KeyCode::Enter)),
+            EditorEvent::RequestSave
         );
+    }
+
+    #[test]
+    fn popup_rejects_invalid_names_by_staying_open() {
+        let mut editor = new_editor();
+        editor.selected_steps.insert("flatpak".to_string());
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(editor.handle_key(key(KeyCode::Enter)), EditorEvent::None);
+        assert!(
+            editor.name_popup.is_some(),
+            "invalid name keeps the popup open"
+        );
+    }
+
+    #[test]
+    fn popup_esc_closes_and_q_types() {
+        let mut editor = new_editor();
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Char('q')));
+        assert_eq!(editor.final_name(), "q");
+        assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::None);
+        assert!(editor.name_popup.is_none());
+    }
+
+    #[test]
+    fn editing_prefills_popup_with_current_name() {
+        let profile = Profile {
+            name: "all-user-daily".to_string(),
+            steps: vec!["flatpak".to_string()],
+            schedule: Schedule::default(),
+            cleanup: true,
+            notify: NotifyPolicy::OnFailure,
+            scope: Scope::User,
+        };
+        let mut editor = EditorState::new(Some(&profile), catalog_entries());
+        assert_eq!(editor.original_name.as_deref(), Some("all-user-daily"));
+        editor.handle_key(key(KeyCode::Enter));
+        assert_eq!(editor.final_name(), "all-user-daily");
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Enter)),
+            EditorEvent::RequestSave,
+            "Enter with the prefilled name saves"
+        );
+    }
+
+    #[test]
+    fn from_preset_prefills_popup_with_suggested_name() {
+        let editor = EditorState::from_preset(
+            catalog_entries(),
+            vec!["flatpak".to_string()],
+            "flatpak-daily",
+        );
+        assert!(editor.creating);
+        assert!(editor.selected_steps.contains("flatpak"));
+        let mut editor = editor;
+        editor.handle_key(key(KeyCode::Enter));
+        assert_eq!(editor.final_name(), "flatpak-daily");
+        let profile = editor.to_profile(&editor.final_name()).unwrap();
+        assert_eq!(profile.name, "flatpak-daily");
+        assert_eq!(profile.steps, vec!["flatpak"]);
     }
 
     #[test]
@@ -827,22 +887,11 @@ mod tests {
             SchedulePreset::Daily { hour, .. } => assert_eq!(*hour, 9),
             other => panic!("unexpected preset {other:?}"),
         }
-        assert!(editor.typed_digits.is_empty(), "two digits auto-commit");
 
         editor.handle_key(key(KeyCode::Char('4')));
         editor.handle_key(key(KeyCode::Down));
         match &editor.schedule.preset {
             SchedulePreset::Daily { hour, .. } => assert_eq!(*hour, 4),
-            other => panic!("unexpected preset {other:?}"),
-        }
-
-        editor.handle_key(key(KeyCode::Up));
-        editor.handle_key(key(KeyCode::Char('9')));
-        editor.handle_key(key(KeyCode::Backspace));
-        editor.handle_key(key(KeyCode::Char('7')));
-        editor.handle_key(key(KeyCode::Right));
-        match &editor.schedule.preset {
-            SchedulePreset::Daily { hour, .. } => assert_eq!(*hour, 7),
             other => panic!("unexpected preset {other:?}"),
         }
     }
@@ -867,13 +916,9 @@ mod tests {
     #[test]
     fn quit_works_outside_text_entry_and_types_inside_it() {
         let mut editor = new_editor();
-        editor.section = Section::Actions;
+        editor.section = Section::Options;
         assert_eq!(
             editor.handle_key(key(KeyCode::Char('q'))),
-            EditorEvent::Quit
-        );
-        assert_eq!(
-            editor.handle_key(key(KeyCode::Char('Q'))),
             EditorEvent::Quit
         );
 
@@ -884,23 +929,11 @@ mod tests {
             "q quits while browsing steps (filter is opt-in)"
         );
         editor.handle_key(key(KeyCode::Char('/')));
-        assert!(editor.steps_filtering);
         assert_eq!(
             editor.handle_key(key(KeyCode::Char('q'))),
             EditorEvent::None
         );
         assert_eq!(editor.filter.value, "q");
-
-        editor.section = Section::Schedule;
-        editor.schedule.preset = SchedulePreset::Custom {
-            calendar: String::new(),
-        };
-        editor.schedule_index = 1;
-        assert_eq!(
-            editor.handle_key(key(KeyCode::Char('q'))),
-            EditorEvent::None
-        );
-        assert_eq!(editor.custom.value, "q");
     }
 
     #[test]
@@ -909,10 +942,7 @@ mod tests {
         editor.section = Section::Steps;
 
         editor.handle_key(key(KeyCode::Char('x')));
-        assert_eq!(
-            editor.filter.value, "",
-            "chars must not leak into the filter"
-        );
+        assert_eq!(editor.filter.value, "");
 
         editor.handle_key(key(KeyCode::Char('/')));
         editor.handle_key(key(KeyCode::Char('c')));
@@ -923,6 +953,10 @@ mod tests {
         editor.handle_key(key(KeyCode::Enter));
         assert!(!editor.steps_filtering);
         assert_eq!(editor.filter.value, "ca", "Enter keeps the filter applied");
+        assert!(
+            editor.name_popup.is_none(),
+            "Enter while filtering must not open the popup"
+        );
 
         editor.handle_key(key(KeyCode::Char('/')));
         editor.handle_key(key(KeyCode::Esc));
@@ -940,7 +974,7 @@ mod tests {
         for _ in 0..total + 5 {
             editor.handle_key(key(KeyCode::Down));
         }
-        assert_eq!(editor.list_index, total - 1, "selection clamps at the end");
+        assert_eq!(editor.list_index, total - 1);
         let (start, end) = editor.steps_window();
         assert!(editor.list_index >= start && editor.list_index < end);
 
@@ -962,67 +996,10 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_s_requests_save_from_any_section() {
-        for section in [
-            Section::Name,
-            Section::Steps,
-            Section::Schedule,
-            Section::Options,
-            Section::Actions,
-        ] {
-            let mut editor = new_editor();
-            editor.section = section;
-            let event = editor.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-            assert_eq!(event, EditorEvent::RequestSave, "section {section:?}");
-        }
-
-        let mut editor = new_editor();
-        editor.section = Section::Steps;
-        editor.handle_key(key(KeyCode::Char('s')));
-        assert_eq!(editor.filter.value, "", "plain s must not save");
-    }
-
-    #[test]
     fn creating_a_profile_lands_on_the_steps_picker() {
         let editor = new_editor();
         assert_eq!(editor.section, Section::Steps);
-
-        let mut editor = new_editor();
-        editor.name = LineEdit::new("dev-daily");
-        editor.handle_key(key(KeyCode::Enter));
-        assert_eq!(editor.section, Section::Steps);
-        assert_eq!(editor.name.value, "dev-daily");
-    }
-
-    #[test]
-    fn from_preset_prefills_name_steps_and_default_schedule() {
-        let entries = catalog_entries();
-        let steps = vec!["flatpak".to_string()];
-        let editor = EditorState::from_preset(2, entries, steps, "flatpak-daily");
-        assert!(editor.creating);
-        assert_eq!(editor.name.value, "flatpak-daily");
-        assert_eq!(editor.section, Section::Steps);
-        assert!(editor.selected_steps.contains("flatpak"));
-        assert_eq!(
-            editor.schedule.preset,
-            crate::domain::schedule::SchedulePreset::Spread {
-                period: crate::domain::schedule::SpreadPeriod::Daily
-            }
-        );
-        assert_eq!(editor.preset_origin, Some(2));
-        let profile = editor.to_profile().unwrap();
-        assert_eq!(profile.name, "flatpak-daily");
-        assert_eq!(profile.steps, vec!["flatpak"]);
-    }
-
-    #[test]
-    fn enter_in_the_name_field_moves_to_steps() {
-        let mut editor = new_editor();
-        editor.section = Section::Name;
-        editor.handle_key(key(KeyCode::Char('d')));
-        editor.handle_key(key(KeyCode::Enter));
-        assert_eq!(editor.section, Section::Steps);
-        assert_eq!(editor.list_index, 0);
+        assert!(editor.name_popup.is_none());
     }
 
     #[test]

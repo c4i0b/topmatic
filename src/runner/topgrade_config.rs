@@ -1,5 +1,9 @@
 use crate::domain::profile::Profile;
 
+fn toml_string(value: &str) -> String {
+    toml::Value::String(value.to_string()).to_string()
+}
+
 pub fn render() -> String {
     [
         "# Managed by topmatic. This file isolates topmatic from your own topgrade",
@@ -17,7 +21,7 @@ pub fn render_for(profile: &Profile) -> String {
     if !profile.repos.is_empty() {
         content.push_str("\n[git]\nrepos = [\n");
         for repo in &profile.repos {
-            content.push_str(&format!("    {:?},\n", repo.path));
+            content.push_str(&format!("    {},\n", toml_string(&repo.path)));
         }
         content.push_str("]\n");
         let with_apply: Vec<&crate::domain::repos::RepoEntry> = profile
@@ -32,10 +36,15 @@ pub fn render_for(profile: &Profile) -> String {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "repo".to_string());
-                content.push_str(&format!(
-                    "apply-{name} = \"cd {:?} && {}\"\n",
+                let command = format!(
+                    "cd {} && {}",
                     repo.path,
                     repo.apply.clone().unwrap_or_default()
+                );
+                content.push_str(&format!(
+                    "{} = {}\n",
+                    toml_string(&format!("apply-{name}")),
+                    toml_string(&command)
                 ));
             }
         }
@@ -101,12 +110,26 @@ mod tests {
     #[test]
     fn renders_git_repos_and_apply_commands_per_profile() {
         let content = render_for(&profile_with_repos());
-        assert!(content.contains("skip_notify = true"));
-        assert!(content.contains("[git]"));
-        assert!(content.contains("\"~/dev/tool\","));
-        assert!(content.contains("\"~/dot\","));
-        assert!(content.contains("[commands]"));
-        assert!(content.contains("apply-dot = \"cd \"~/dot\" && stow bash\""));
+        let parsed: toml::Value = toml::from_str(&content).unwrap_or_else(|error| {
+            panic!("rendered config is not valid TOML: {error}\n{content}")
+        });
+        let repos = parsed
+            .get("git")
+            .and_then(|git| git.get("repos"))
+            .and_then(|repos| repos.as_array())
+            .expect("[git] repos array");
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0].as_str(), Some("~/dev/tool"));
+        assert_eq!(repos[1].as_str(), Some("~/dot"));
+        let commands = parsed
+            .get("commands")
+            .and_then(|commands| commands.as_table())
+            .expect("[commands] table");
+        assert_eq!(
+            commands.get("apply-dot").and_then(|cmd| cmd.as_str()),
+            Some("cd ~/dot && stow bash")
+        );
+        assert_eq!(commands.len(), 1);
     }
 
     #[test]
@@ -114,5 +137,21 @@ mod tests {
         let mut profile = profile_with_repos();
         profile.repos.clear();
         assert_eq!(render_for(&profile), render());
+        toml::from_str::<toml::Value>(&render_for(&profile)).unwrap();
+    }
+
+    #[test]
+    fn rendered_base_config_is_valid_toml() {
+        let parsed: toml::Value =
+            toml::from_str(&render()).expect("base config must be valid TOML");
+        assert_eq!(
+            parsed.get("skip_notify").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(parsed.get("no_retry").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            parsed.get("no_self_update").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 }

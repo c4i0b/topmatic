@@ -22,6 +22,10 @@ enum Command {
     },
     /// Converge systemd units to the config
     Sync,
+    /// List profiles with timer status
+    List,
+    /// Edit the config with $EDITOR, then sync
+    Edit,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -29,8 +33,75 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Run { profile, dry_run }) => cmd_run(&profile, dry_run),
         Some(Command::Sync) => cmd_sync(),
+        Some(Command::List) => cmd_list(),
+        Some(Command::Edit) => cmd_edit(),
         None => topmatic::tui::run(),
     }
+}
+
+fn cmd_list() -> anyhow::Result<()> {
+    let paths = topmatic::paths::Paths::from_env();
+    let config = topmatic::config::load(&paths)?;
+    if config.profiles.is_empty() {
+        println!("no profiles yet; run topmatic to create one");
+        return Ok(());
+    }
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    let ctl = topmatic::systemd::RealSystemdCtl::new(home);
+    let header = format!(
+        "{:<24} {:<7} {:<22} {:<20} {}",
+        "PROFILE", "STATE", "SCHEDULE", "NEXT RUN", "LAST RUN"
+    );
+    println!("{header}");
+    for profile in &config.profiles {
+        let next = ctl
+            .next_run(&profile.name)
+            .map(|next| next.format("%a %d %b %H:%M").to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let last = topmatic::runner::read_status(&paths, &profile.name)
+            .ok()
+            .flatten()
+            .map(|outcome| {
+                if outcome.skipped {
+                    "skipped".to_string()
+                } else if outcome.success {
+                    outcome.finished_at.format("ok %d %b %H:%M").to_string()
+                } else {
+                    outcome.finished_at.format("FAILED %d %b %H:%M").to_string()
+                }
+            })
+            .unwrap_or_else(|| "never".to_string());
+        println!(
+            "{:<24} {:<7} {:<22} {:<20} {}",
+            profile.name,
+            if profile.enabled { "active" } else { "paused" },
+            profile.schedule.summary(),
+            next,
+            last
+        );
+    }
+    Ok(())
+}
+
+fn cmd_edit() -> anyhow::Result<()> {
+    let paths = topmatic::paths::Paths::from_env();
+    if !paths.config_file().exists() {
+        std::fs::create_dir_all(&paths.config_dir)?;
+        std::fs::write(
+            paths.config_file(),
+            "# topmatic configuration\n\n[[profiles]]\n",
+        )?;
+    }
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let status = std::process::Command::new(&editor)
+        .arg(paths.config_file())
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("editor {editor:?} exited with {status}");
+    }
+    cmd_sync()
 }
 
 fn cmd_sync() -> anyhow::Result<()> {

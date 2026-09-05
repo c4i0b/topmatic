@@ -5,7 +5,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Row as TableRow, Table};
 
-use crate::domain::schedule::{Schedule, SchedulePreset};
 use crate::runner::RunOutcome;
 
 use super::App;
@@ -17,20 +16,6 @@ pub struct ProfileRow {
     pub schedule: String,
     pub next_run: Option<DateTime<Utc>>,
     pub status: Option<RunOutcome>,
-}
-
-pub fn schedule_summary(schedule: &Schedule) -> String {
-    match &schedule.preset {
-        SchedulePreset::Hourly => "hourly".to_string(),
-        SchedulePreset::EveryNHours { hours } => format!("every {hours}h"),
-        SchedulePreset::Daily { hour, minute } => format!("daily {hour:02}:{minute:02}"),
-        SchedulePreset::Weekly {
-            weekday,
-            hour,
-            minute,
-        } => format!("weekly {} {hour:02}:{minute:02}", weekday.as_systemd()),
-        SchedulePreset::Custom { calendar } => format!("custom: {calendar}"),
-    }
 }
 
 fn status_span(status: &Option<RunOutcome>) -> Span<'static> {

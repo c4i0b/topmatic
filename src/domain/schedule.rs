@@ -98,6 +98,22 @@ impl Default for Schedule {
     }
 }
 
+impl Schedule {
+    pub fn summary(&self) -> String {
+        match &self.preset {
+            SchedulePreset::Hourly => "hourly".to_string(),
+            SchedulePreset::EveryNHours { hours } => format!("every {hours}h"),
+            SchedulePreset::Daily { hour, minute } => format!("daily {hour:02}:{minute:02}"),
+            SchedulePreset::Weekly {
+                weekday,
+                hour,
+                minute,
+            } => format!("weekly {} {hour:02}:{minute:02}", weekday.as_systemd()),
+            SchedulePreset::Custom { calendar } => format!("custom: {calendar}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

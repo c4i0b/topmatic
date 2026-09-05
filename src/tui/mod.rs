@@ -148,7 +148,7 @@ impl App {
             .map(|profile| dashboard::ProfileRow {
                 name: profile.name.clone(),
                 enabled: profile.enabled,
-                schedule: dashboard::schedule_summary(&profile.schedule),
+                schedule: profile.schedule.summary(),
                 next_run: if profile.enabled {
                     self.ctl.next_run(&profile.name)
                 } else {

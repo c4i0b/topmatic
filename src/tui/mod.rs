@@ -592,7 +592,7 @@ impl App {
                     "/ filter  n new  e edit  space pause  d delete  r run  t test  l logs  g linger  s resync  ? help  q quit"
                 }
                 View::Editor(_) => {
-                    "tab section  space toggle  ←→ adjust  type numbers  esc cancel  q quit"
+                    "tab section  space toggle  ←→ adjust  ctrl+s save  esc cancel  q quit"
                 }
                 View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
                 View::Help => "any key closes  q quit",

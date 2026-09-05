@@ -278,6 +278,9 @@ impl EditorState {
         if matches!(key.code, KeyCode::Char('q' | 'Q')) && !self.text_entry_focused() {
             return EditorEvent::Quit;
         }
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+            return EditorEvent::RequestSave;
+        }
         if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::BackTab {
             self.section = prev_section(self.section);
             self.reset_indices();
@@ -1085,6 +1088,28 @@ mod tests {
         assert_eq!(editor.list_index, 1);
         editor.handle_key(key(KeyCode::Char('k')));
         assert_eq!(editor.list_index, 0);
+    }
+
+    #[test]
+    fn ctrl_s_requests_save_from_any_section() {
+        for section in [
+            Section::Name,
+            Section::Steps,
+            Section::Repos,
+            Section::Schedule,
+            Section::Options,
+            Section::Actions,
+        ] {
+            let mut editor = new_editor();
+            editor.section = section;
+            let event = editor.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+            assert_eq!(event, EditorEvent::RequestSave, "section {section:?}");
+        }
+
+        let mut editor = new_editor();
+        editor.section = Section::Steps;
+        editor.handle_key(key(KeyCode::Char('s')));
+        assert_eq!(editor.filter.value, "", "plain s must not save");
     }
 
     #[test]

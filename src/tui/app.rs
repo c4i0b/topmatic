@@ -754,6 +754,32 @@ mod tests {
     }
 
     #[test]
+    fn creating_over_an_existing_suggested_name_keeps_the_editor_and_reports() {
+        let (mut app, _harness) = harness(&[profile("all-daily"), profile("other")]);
+        app.catalog = presets::fallback_catalog();
+        app.handle_key(key(KeyCode::Char('n')));
+        assert!(matches!(app.view, View::PresetPicker { .. }));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(
+            matches!(app.view, View::Editor(_)),
+            "first preset 'all-daily' opens the create editor"
+        );
+        save_editor_profile(&mut app, "all-daily", "all-daily");
+
+        assert!(
+            app.message.contains("already exists"),
+            "colliding with an existing profile must report and stay in the editor: {:?}",
+            app.message
+        );
+        assert!(
+            matches!(app.view, View::Editor(_)),
+            "the user stays on the creation screen instead of silently losing the draft"
+        );
+        let saved = crate::config::load(&app.paths).unwrap();
+        assert_eq!(saved.profiles.len(), 2, "no profile is created on collision");
+    }
+
+    #[test]
     fn new_profile_flow_picks_preset_saves_and_converges() {
         let (mut app, harness) = harness(&[]);
         app.handle_key(key(KeyCode::Char('n')));

@@ -105,7 +105,9 @@ fn draw_header(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
-    let hints = footer_hints(&app.view, app.filter.active);
+    let filter_typing =
+        app.filter.active || matches!(&app.view, View::Editor(state) if state.steps_filter.active);
+    let hints = footer_hints(&app.view, filter_typing);
     let prefix = if let Some(active_filter) = active_filter(app) {
         Some((format!(" /{}", active_filter), Color::Yellow))
     } else if let Some(job) = &app.in_flight {
@@ -164,15 +166,13 @@ pub(crate) fn activity_prefix(entry: &ActivityEntry) -> Option<(String, Color)> 
 }
 
 fn active_filter(app: &App) -> Option<String> {
-    if app.filter.active {
-        return Some(app.filter.text().to_string());
+    match &app.view {
+        View::Dashboard if app.filter.is_engaged() => Some(app.filter.filter_query()),
+        View::Editor(state) if state.steps_filter.is_engaged() => {
+            Some(state.steps_filter.filter_query())
+        }
+        _ => None,
     }
-    if let View::Editor(state) = &app.view
-        && state.steps_filter.active
-    {
-        return Some(state.steps_filter.text().to_string());
-    }
-    None
 }
 
 pub(crate) fn activity_color(kind: ActivityKind) -> Color {
@@ -454,7 +454,6 @@ pub(crate) fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
 mod tests {
     use super::*;
     use crate::tui::editor::EditorState;
-    use crate::tui::input::FilterState;
 
     #[test]
     fn activity_prefix_styles_each_kind_with_trailing_space() {
@@ -638,25 +637,54 @@ mod tests {
 
     #[test]
     fn active_filter_reports_dashboard_and_editor_steps_queries() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let enter = || KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         let (mut app, _tmp) = test_harness();
-        assert_eq!(active_filter(&app), None, "no active filter shows nothing");
+        assert_eq!(active_filter(&app), None, "no engaged filter shows nothing");
+
         app.filter.start();
         app.filter.edit.value = "ca".to_string();
-        assert_eq!(active_filter(&app).as_deref(), Some("ca"));
+        assert_eq!(
+            active_filter(&app).as_deref(),
+            Some("ca▏"),
+            "the caret shows while typing"
+        );
+        app.filter.handle(enter());
+        assert_eq!(
+            active_filter(&app).as_deref(),
+            Some("ca"),
+            "a committed filter stays visible in the footer"
+        );
 
-        let mut state = EditorState::new(
+        let state = EditorState::new(
             None,
             vec!["cargo".to_string()],
             crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
         );
+        app.view = View::Editor(Box::new(state));
+        assert_eq!(
+            active_filter(&app),
+            None,
+            "the dashboard filter does not leak into the editor"
+        );
+
+        let View::Editor(boxed) = app.view else {
+            unreachable!("the editor view is set above")
+        };
+        let mut state = *boxed;
         state.steps_filter.start();
         state.steps_filter.edit.value = "flat".to_string();
         app.view = View::Editor(Box::new(state));
-        app.filter = FilterState::new();
+        assert_eq!(active_filter(&app).as_deref(), Some("flat▏"));
+        let View::Editor(mut boxed) = app.view else {
+            unreachable!("the editor view is set above")
+        };
+        boxed.steps_filter.handle(enter());
+        app.view = View::Editor(boxed);
         assert_eq!(
             active_filter(&app).as_deref(),
             Some("flat"),
-            "an engaged steps filter surfaces its query in the footer"
+            "a committed steps filter also surfaces in the footer"
         );
     }
 

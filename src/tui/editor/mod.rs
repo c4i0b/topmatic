@@ -251,8 +251,7 @@ impl EditorState {
         }
         if key.code == KeyCode::Esc && self.steps_filter.is_engaged() {
             self.steps_filter = FilterState::new();
-            self.list_index = 0;
-            self.steps_scroll = 0;
+            self.clamp_steps_selection();
             return EditorEvent::None;
         }
         if matches!(key.code, KeyCode::Char('q' | 'Q')) && !self.text_entry_focused() {
@@ -351,8 +350,7 @@ impl EditorState {
                 KeyCode::Down => self.move_steps_selection(1),
                 _ => {
                     self.steps_filter.handle(key);
-                    self.list_index = 0;
-                    self.steps_scroll = 0;
+                    self.clamp_steps_selection();
                 }
             }
             return EditorEvent::None;
@@ -399,6 +397,16 @@ impl EditorState {
             STEPS_ROWS,
             &mut self.steps_scroll,
         );
+    }
+
+    fn clamp_steps_selection(&mut self) {
+        let len = self.filtered_steps().len();
+        self.list_index = if len == 0 {
+            0
+        } else {
+            self.list_index.min(len - 1)
+        };
+        self.realign_steps_window();
     }
 
     fn toggle_step_at(&mut self, index: usize) {
@@ -1118,6 +1126,29 @@ mod tests {
         assert_eq!(grid_window(30, 100, 3, 10, &mut scroll), (3, 33));
         let mut end = 0usize;
         assert_eq!(grid_window(99, 100, 3, 10, &mut end), (72, 100));
+    }
+
+    #[test]
+    fn narrowing_the_steps_filter_clamps_instead_of_resetting() {
+        let mut editor = new_editor();
+        editor.section = Section::Steps;
+        for _ in 0..5 {
+            editor.handle_key(key(KeyCode::Down));
+        }
+        assert_eq!(editor.list_index, 5);
+        editor.handle_key(key(KeyCode::Char('/')));
+        editor.steps_filter.edit.value = "flat".to_string();
+        editor.handle_key(key(KeyCode::Left));
+        let len = editor.filtered_steps().len();
+        assert!(
+            (1..6).contains(&len),
+            "the query narrows the catalog: {len}"
+        );
+        assert_eq!(
+            editor.list_index,
+            len - 1,
+            "the selection clamps to the last surviving step, not back to zero"
+        );
     }
 
     #[test]

@@ -15,8 +15,8 @@ impl EditorState {
         } else {
             self.steps_window().0 + 1
         };
-        let filter_label = if self.steps_filter.active {
-            format!(" filter: {}▏", self.steps_filter.text())
+        let filter_label = if self.steps_filter.is_engaged() {
+            format!(" filter: {}", self.steps_filter.filter_query())
         } else {
             String::new()
         };
@@ -338,10 +338,19 @@ mod tests {
         );
         editor.steps_filter.start();
         editor.steps_filter.edit.value = "flat".to_string();
-        let filtered = line_text(&editor.steps_header());
+        let typing = line_text(&editor.steps_header());
         assert!(
-            filtered.contains("filter: flat▏"),
-            "the engaged filter shows its query: {filtered:?}"
+            typing.contains("filter: flat▏"),
+            "the engaged filter shows its query with a caret while typing: {typing:?}"
+        );
+        editor.steps_filter.handle(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let committed = line_text(&editor.steps_header());
+        assert!(
+            committed.contains("filter: flat") && !committed.contains('▏'),
+            "a committed filter stays visible without the caret: {committed:?}"
         );
     }
 

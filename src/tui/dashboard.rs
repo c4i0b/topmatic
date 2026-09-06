@@ -218,7 +218,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
         .collect();
 
     let filter_title = if app.filtering() {
-        format!("Profiles (filter: {})", app.filter_text())
+        format!("Profiles (filter: {})", app.filter.filter_query())
     } else {
         "Profiles".to_string()
     };

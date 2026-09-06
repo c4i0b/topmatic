@@ -46,6 +46,10 @@ impl FilterState {
         &self.edit.value
     }
 
+    pub fn filter_query(&self) -> String {
+        format!("{}{}", self.edit.value, if self.active { "▏" } else { "" })
+    }
+
     pub fn matches(&self, haystack: &str) -> bool {
         let needle = self.edit.value.to_lowercase();
         needle.is_empty() || haystack.to_lowercase().contains(&needle)

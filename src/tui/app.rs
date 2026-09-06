@@ -533,8 +533,22 @@ impl App {
 
     fn handle_dashboard_key(&mut self, key: KeyEvent) {
         if self.filter.active {
-            self.filter.handle(key);
-            self.clamp_selection();
+            match key.code {
+                KeyCode::Up => {
+                    self.selected = self.selected.saturating_sub(1);
+                    self.clamp_selection();
+                }
+                KeyCode::Down => {
+                    if self.selected + 1 < self.visible_rows().len() {
+                        self.selected += 1;
+                    }
+                    self.clamp_selection();
+                }
+                _ => {
+                    self.filter.handle(key);
+                    self.clamp_selection();
+                }
+            }
             return;
         }
         match key.code {
@@ -554,8 +568,7 @@ impl App {
                     self.activity_panel = false;
                 } else if self.filter.is_engaged() {
                     self.filter.edit = LineEdit::new(String::new());
-                    self.selected = 0;
-                    self.list_scroll = 0;
+                    self.clamp_selection();
                 }
             }
             KeyCode::Char('L') => self.toggle_activity_panel(),
@@ -1616,6 +1629,19 @@ mod tests {
             app.activity_scroll, 0,
             "opening the panel resets scroll to newest"
         );
+    }
+
+    #[test]
+    fn dashboard_arrows_move_the_selection_while_typing_a_filter() {
+        let (mut app, _harness) = harness(&[profile("all-daily"), profile("dev-tools")]);
+        app.handle_key(key(KeyCode::Char('/')));
+        assert!(app.filter.active);
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.selected, 1, "down moves the selection mid-filter");
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.selected, 0, "up moves it back");
+        app.handle_key(key(KeyCode::Char('a')));
+        assert_eq!(app.filter.text(), "a", "regular keys still type");
     }
 
     #[test]

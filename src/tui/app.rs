@@ -59,7 +59,6 @@ pub struct App {
     pub topgrade_bin: Option<PathBuf>,
     pub catalog: Vec<String>,
     pub in_flight: Option<BackgroundJob>,
-    pending_follow: Option<String>,
     pub view: View,
     pub selected: usize,
     pub list_scroll: u16,
@@ -144,7 +143,6 @@ impl App {
             topgrade_bin,
             catalog: Vec::new(),
             in_flight: None,
-            pending_follow: None,
             view: View::Dashboard,
             selected: 0,
             list_scroll: 0,
@@ -304,12 +302,10 @@ impl App {
         match outcome {
             JobOutcome::Success(action) => {
                 self.log(ActivityKind::Action, action);
-                self.run_after_result();
             }
             JobOutcome::Error(message) => {
                 self.log(ActivityKind::Error, message.clone());
                 self.message = message;
-                self.pending_follow = None;
             }
         }
         self.rebuild_rows();
@@ -751,14 +747,6 @@ impl App {
                 Err(error) => JobOutcome::Error(format!("start failed: {error}")),
             }
         });
-        self.pending_follow = Some(name);
-    }
-
-    fn run_after_result(&mut self) {
-        let Some(name) = self.pending_follow.take() else {
-            return;
-        };
-        self.rebuild_rows();
         self.view = View::Logs(logs::LogsState::follow(&name));
     }
 
@@ -1341,6 +1329,13 @@ mod tests {
     fn run_now_shows_loading_then_starts_the_service_through_the_manager() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        match &app.view {
+            View::Logs(state) => {
+                assert!(state.follow);
+                assert_eq!(state.profile, "all-daily");
+            }
+            _ => panic!("run now opens the live view immediately, before the start finishes"),
+        }
         assert!(
             app.in_flight.is_some(),
             "run defers the start behind busy feedback"
@@ -1424,6 +1419,27 @@ mod tests {
         app.handle_key(key(KeyCode::Esc));
         assert!(matches!(app.view, View::Dashboard));
         assert!(app.rows[0].running, "backgrounding keeps the run alive");
+    }
+
+    #[test]
+    fn live_view_x_works_while_the_start_is_still_in_flight() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        assert!(
+            app.in_flight.is_some(),
+            "the start is still running in the background"
+        );
+        app.handle_key(key(KeyCode::Char('x')));
+        settle(&mut app);
+        assert!(
+            harness
+                .calls
+                .lock()
+                .unwrap()
+                .contains(&"stop:all-daily".to_string()),
+            "x reaches systemd even before the start job settles: {:?}",
+            harness.calls.lock().unwrap()
+        );
     }
 
     #[test]

@@ -10,9 +10,10 @@ Flatpaks, cargo installs, npm globals, pipx apps… [topgrade](https://github.co
 
 - You want automatic updates of **your** software, without root, daemons or cron hacks
 - Your own topgrade config stays untouched — topmatic always runs topgrade with an isolated config
-- Machines are off sometimes: timers are persistent and catch up missed runs
+- Machines are off sometimes: timers are `Persistent=` and catch up missed runs
 - Jobs run at minimum priority (`Nice=19`, batch CPU, idle IO) — never in your way
-- Default schedule follows the common Linux convention: daily anchor with a small random jitter (≤30min), so nothing hammers mirrors at the same second
+- Schedules are frequencies anchored at midnight with a small random delay (≤5min), so nothing hammers mirrors at the same second
+- Flaky runs self-heal: steps retry immediately, failed runs retry with growing delays behind a connectivity check, and you only hear about a failure that survived all of that
 - Self-healing: every start rewrites drifted unit files, prunes stray schedule overrides and removes orphan timers of profiles that no longer exist; `topmatic doctor` diagnoses and `topmatic reset` starts clean
 - Owns only what it proves: a timer is only ever touched if it carries topmatic's schedule drop-in (`topmatic@<profile>.timer.d/10-schedule.conf`), so timers created by other tools — even ones named `topmatic@*` — are left alone with a note instead of being deleted
 
@@ -28,27 +29,30 @@ Flatpaks, cargo installs, npm globals, pipx apps… [topgrade](https://github.co
 cargo install --git https://github.com/c4i0b/topmatic
 ```
 
-Then run `topmatic` once: it installs the systemd user units and offers to enable lingering so timers fire even when you are logged out (never uses sudo).
+Then run `topmatic` once: it installs the systemd user units and converges the timers to your config. To let timers fire while you are logged out, enable lingering yourself (`loginctl enable-linger`) — topmatic shows its state and explains it, but never runs anything privileged.
 
 ## Use
 
 ```sh
 topmatic          # TUI
 topmatic list     # profiles, next run, last status
-topmatic doctor   # diagnose + auto-repair unit drift
+topmatic doctor   # diagnose + auto-repair unit drift (shows the effective run policy)
+topmatic doctor --repair  # quarantine a broken config and start fresh
 topmatic sync     # converge systemd units to the config
-topmatic edit     # edit the config with $EDITOR, then sync
+topmatic edit     # back up the config, edit it with $EDITOR, then sync
 topmatic run <profile> [--dry-run]
 topmatic reset [--all]   # remove units/schedules/history; --all also archives the config
 ```
 
-In the TUI: `n` new (from a preset), `e` edit, `d` delete, `r` run now, `t` dry-run test, `l` logs, `s` resync now, `g` toggle lingering, `/` filter, mouse click/scroll, `?` help, `q` quit (lower or upper case; while you are typing in a filter, `q` is just a letter). The editor has three sections (steps, schedule, options) toggled with `Tab`; `Enter` names the profile and saves it. The right pane shows live details for the selected profile: schedule, countdown to next fire, timer state and the tail of the last run log.
+In the TUI: `n` new (from a preset), `e` edit, `d` delete, `r` run now, `l` logs, `/` filter, mouse click/scroll, `?` help, `q` quit (lower or upper case; while a filter is active, `q` is just a letter). The right pane shows live details for the selected profile: schedule, countdown to next fire, timer state and the tail of the last run log.
+
+The editor cycles its sections with `Tab` — steps, schedule, options, save — and `Enter` acts on the highlighted row: it toggles a step, opens a picker for the schedule frequency or for notifications, or saves from the save row (a `*` marks unsaved changes). Schedules are frequencies anchored at midnight — daily, weekly, every 6 hours — with custom `OnCalendar` as the escape hatch; missed runs catch up on the next boot.
 
 New profiles start from a preset — everything user-level, dev tools or Flatpak — with steps pre-selected, a suggested name and the default schedule; tweak anything before saving. Presets are computed live from your installed topgrade, so they always match its step list.
 
 ![editor](docs/assets/editor.png)
 
-Profiles live in `~/.config/topmatic/config.toml` — edit it by hand or via TUI, both are first-class; topmatic reconciles systemd to match it on every start.
+Profiles live in `~/.config/topmatic/config.toml` — edit it by hand or via TUI, both are first-class; topmatic reconciles systemd to match it on every start. A `[defaults]` table tunes the run behavior for every profile (`retries`, `retry_delay`, `give_up_after`, `network_wait`, `random_delay` as `2min`-style values); `config.example.toml`, regenerated next to it, documents every key with the current defaults.
 
 ### Schedules as dotfiles
 

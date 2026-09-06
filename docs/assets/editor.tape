@@ -5,8 +5,10 @@ Set Padding 12
 Set TypingSpeed 50ms
 Output "target/tapes/editor.gif"
 
-Type "PATH=$HOME/.cargo/bin:/run/host/usr/bin:$PATH topmatic"
+Type "topmatic"
 Enter
 Sleep 3s
-Type "e"
+Type "n"
+Sleep 1s
+Enter
 Sleep 2s

@@ -3,9 +3,8 @@ use std::collections::BTreeSet;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::domain::profile::{NotifyPolicy, Profile, Scope, sanitize_name};
-use crate::domain::schedule::{
-    Schedule, SchedulePreset, Weekday, matches_quick_choice, quick_choices,
-};
+use crate::domain::schedule::{Schedule, SchedulePreset, Weekday, quick_choices};
+
 use crate::systemd::validate_on_calendar;
 
 use super::input::{FilterState, LineEdit};
@@ -74,6 +73,7 @@ pub struct EditorState {
     pub section: Section,
     pub list_index: usize,
     pub schedule_index: usize,
+    pub jitter_secs: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -85,7 +85,8 @@ pub enum EditorEvent {
 }
 
 impl EditorState {
-    pub fn new(original: Option<&Profile>, catalog: Vec<String>) -> Self {
+    pub fn new(original: Option<&Profile>, catalog: Vec<String>, jitter_secs: u64) -> Self {
+        let base_schedule = quick_choices(jitter_secs)[0].1.clone();
         match original {
             Some(profile) => {
                 let mut schedule = profile.schedule.clone();
@@ -114,6 +115,7 @@ impl EditorState {
                     section: Section::Steps,
                     list_index: 0,
                     schedule_index: 0,
+                    jitter_secs,
                 }
             }
             None => Self {
@@ -128,17 +130,23 @@ impl EditorState {
                 custom: LineEdit::new(String::new()),
                 catalog,
                 selected_steps: BTreeSet::new(),
-                schedule: quick_choices()[0].1.clone(),
+                schedule: base_schedule,
                 notify: NotifyPolicy::OnFailure,
                 section: Section::Steps,
                 list_index: 0,
                 schedule_index: 0,
+                jitter_secs,
             },
         }
     }
 
-    pub fn from_preset(catalog: Vec<String>, steps: Vec<String>, suggested_name: &str) -> Self {
-        let mut editor = Self::new(None, catalog);
+    pub fn from_preset(
+        catalog: Vec<String>,
+        steps: Vec<String>,
+        suggested_name: &str,
+        jitter_secs: u64,
+    ) -> Self {
+        let mut editor = Self::new(None, catalog, jitter_secs);
         editor.selected_steps = steps.into_iter().collect();
         editor.suggested_name = Some(suggested_name.to_string());
         editor
@@ -433,16 +441,18 @@ impl EditorState {
                     .unwrap_or(ScheduleRow::Preset)
                 {
                     ScheduleRow::Preset => {
-                        let mut options: Vec<String> = quick_choices()
-                            .iter()
-                            .map(|(label, _)| label.to_string())
-                            .collect();
+                        let choices = quick_choices(self.jitter_secs);
+                        let mut options: Vec<String> =
+                            choices.iter().map(|(label, _)| label.to_string()).collect();
                         options.push("custom OnCalendar".to_string());
                         let current =
                             if matches!(self.schedule.preset, SchedulePreset::Custom { .. }) {
-                                quick_choices().len()
+                                choices.len()
                             } else {
-                                matches_quick_choice(&self.schedule).unwrap_or(0)
+                                choices
+                                    .iter()
+                                    .position(|(_, choice)| choice == &self.schedule)
+                                    .unwrap_or(0)
                             };
                         RowEditor::select("frequency", options, current, SelectTarget::Preset)
                     }
@@ -490,8 +500,8 @@ impl EditorState {
         };
         match popup.target {
             SelectTarget::Preset => {
-                if popup.index < quick_choices().len() {
-                    self.schedule = quick_choices()[popup.index].1.clone();
+                if popup.index < quick_choices(self.jitter_secs).len() {
+                    self.schedule = quick_choices(self.jitter_secs)[popup.index].1.clone();
                 } else {
                     let calendar = if self.custom.value.trim().is_empty() {
                         match &self.schedule.preset {
@@ -536,6 +546,8 @@ pub fn validate_draft(profile: &Profile) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::schedule::DEFAULT_DELAY_SEC;
+    use crate::domain::schedule::matches_quick_choice;
     use crate::domain::steps::catalog;
 
     const HELP: &str = include_str!("../../../tests/fixtures/topgrade_help.txt");
@@ -545,7 +557,7 @@ mod tests {
     }
 
     fn new_editor() -> EditorState {
-        EditorState::new(None, catalog_entries())
+        EditorState::new(None, catalog_entries(), DEFAULT_DELAY_SEC)
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -560,7 +572,7 @@ mod tests {
             notify: NotifyPolicy::OnFailure,
             scope: Scope::User,
         };
-        EditorState::new(Some(&profile), catalog_entries())
+        EditorState::new(Some(&profile), catalog_entries(), DEFAULT_DELAY_SEC)
     }
 
     #[test]
@@ -737,7 +749,7 @@ mod tests {
     #[test]
     fn weekday_popup_applies_selection() {
         let mut editor = new_editor();
-        editor.schedule = quick_choices()[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_DELAY_SEC)[1].1.clone();
         editor.section = Section::Schedule;
         editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Enter));
@@ -764,7 +776,7 @@ mod tests {
     #[test]
     fn cursor_clamps_when_preset_shrinks_rows() {
         let mut editor = new_editor();
-        editor.schedule = quick_choices()[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_DELAY_SEC)[1].1.clone();
         editor.schedule_index = 1;
         assert_eq!(editor.schedule_rows().len(), 2);
         editor.schedule.preset = SchedulePreset::Daily { hour: 0, minute: 0 };
@@ -996,6 +1008,7 @@ mod tests {
             catalog_entries(),
             vec!["flatpak".to_string()],
             "flatpak-daily",
+            DEFAULT_DELAY_SEC,
         );
         assert!(editor.creating);
         assert!(editor.selected_steps.contains("flatpak"));

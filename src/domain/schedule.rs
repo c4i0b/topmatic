@@ -133,13 +133,13 @@ impl Schedule {
     }
 }
 
-pub fn quick_choices() -> Vec<(&'static str, Schedule)> {
+pub fn quick_choices(jitter_secs: u64) -> Vec<(&'static str, Schedule)> {
     vec![
         (
             "daily",
             Schedule {
                 preset: SchedulePreset::Daily { hour: 0, minute: 0 },
-                randomized_delay_sec: DEFAULT_DELAY_SEC,
+                randomized_delay_sec: jitter_secs,
             },
         ),
         (
@@ -150,21 +150,21 @@ pub fn quick_choices() -> Vec<(&'static str, Schedule)> {
                     hour: 0,
                     minute: 0,
                 },
-                randomized_delay_sec: 900,
+                randomized_delay_sec: jitter_secs,
             },
         ),
         (
             "every 6 hours",
             Schedule {
                 preset: SchedulePreset::EveryNHours { hours: 6 },
-                randomized_delay_sec: 900,
+                randomized_delay_sec: jitter_secs,
             },
         ),
     ]
 }
 
 pub fn matches_quick_choice(schedule: &Schedule) -> Option<usize> {
-    quick_choices()
+    quick_choices(DEFAULT_DELAY_SEC)
         .iter()
         .position(|(_, choice)| choice == schedule)
 }
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn quick_choices_match_their_own_schedules() {
-        for (index, (_, choice)) in quick_choices().iter().enumerate() {
+        for (index, (_, choice)) in quick_choices(DEFAULT_DELAY_SEC).iter().enumerate() {
             assert_eq!(matches_quick_choice(choice), Some(index));
         }
         assert_eq!(matches_quick_choice(&Schedule::default()), Some(0));
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn quick_choices_anchor_calendar_presets_at_midnight() {
-        for (_, choice) in quick_choices() {
+        for (_, choice) in quick_choices(DEFAULT_DELAY_SEC) {
             match &choice.preset {
                 SchedulePreset::Daily { hour, minute }
                 | SchedulePreset::Weekly { hour, minute, .. } => {

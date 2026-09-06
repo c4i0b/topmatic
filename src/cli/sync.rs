@@ -4,6 +4,7 @@ use crate::systemd::SystemdCtl;
 pub fn run() -> anyhow::Result<()> {
     let paths = Paths::from_env();
     let (config, issues) = crate::config::load_validated(&paths)?;
+    let _ = crate::config::write_example_if_changed(&paths);
     let topmatic_bin = std::env::current_exe()?;
     let ctl = super::user_ctl()?;
 

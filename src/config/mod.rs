@@ -1,16 +1,181 @@
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::profile::{Profile, sanitize_name};
 use crate::domain::schedule::SchedulePreset;
 use crate::paths::Paths;
+use crate::runner::retry::RetryPolicy;
 
 const HEADER: &str =
     "# topmatic configuration. Edit freely; topmatic reconciles systemd on next open.\n\n";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default, skip_serializing_if = "Defaults::is_empty")]
+    pub defaults: Defaults,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<Profile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TomlDuration(pub Duration);
+
+impl Serialize for TomlDuration {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        humantime::format_duration(self.0)
+            .to_string()
+            .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TomlDuration {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let text = String::deserialize(deserializer)?;
+        humantime::parse_duration(&text)
+            .map(TomlDuration)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Defaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_base_delay: Option<TomlDuration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_budget: Option<TomlDuration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_wait: Option<TomlDuration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_jitter: Option<TomlDuration>,
+}
+
+impl Defaults {
+    pub fn is_empty(&self) -> bool {
+        *self == Defaults::default()
+    }
+
+    pub fn resolved(&self) -> ResolvedDefaults {
+        let hardcoded = ResolvedDefaults::hardcoded();
+        if !validate_defaults(self).is_empty() {
+            return hardcoded;
+        }
+        ResolvedDefaults {
+            retries: self.retries.unwrap_or(hardcoded.retries),
+            retry_base_delay: self
+                .retry_base_delay
+                .map(|d| d.0)
+                .unwrap_or(hardcoded.retry_base_delay),
+            retry_budget: self
+                .retry_budget
+                .map(|d| d.0)
+                .unwrap_or(hardcoded.retry_budget),
+            network_wait: self
+                .network_wait
+                .map(|d| d.0)
+                .unwrap_or(hardcoded.network_wait),
+            default_jitter: self
+                .default_jitter
+                .map(|d| d.0)
+                .unwrap_or(hardcoded.default_jitter),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedDefaults {
+    pub retries: u32,
+    pub retry_base_delay: Duration,
+    pub retry_budget: Duration,
+    pub network_wait: Duration,
+    pub default_jitter: Duration,
+}
+
+impl ResolvedDefaults {
+    pub fn hardcoded() -> Self {
+        Self {
+            retries: 3,
+            retry_base_delay: Duration::from_secs(2 * 60),
+            retry_budget: Duration::from_secs(45 * 60),
+            network_wait: Duration::from_secs(10 * 60),
+            default_jitter: Duration::from_secs(5 * 60),
+        }
+    }
+}
+
+impl From<&ResolvedDefaults> for RetryPolicy {
+    fn from(defaults: &ResolvedDefaults) -> Self {
+        Self {
+            max_retries: defaults.retries,
+            base_delay: defaults.retry_base_delay,
+            delay_factor: 3,
+            budget: defaults.retry_budget,
+            network_cap: defaults.network_wait,
+            poll: Duration::from_secs(10),
+        }
+    }
+}
+
+pub fn validate_defaults(defaults: &Defaults) -> Vec<String> {
+    let mut errors = Vec::new();
+    match defaults.retries {
+        None => {}
+        Some(retries) if retries > 10 => errors.push(format!("retries {retries} exceeds 10")),
+        Some(_) => {}
+    }
+    let mut positive = |value: Option<TomlDuration>, name: &str| {
+        if let Some(duration) = value
+            && duration.0.is_zero()
+        {
+            errors.push(format!("{name} must be greater than zero"));
+        }
+    };
+    positive(defaults.retry_base_delay, "retry_base_delay");
+    positive(defaults.retry_budget, "retry_budget");
+    positive(defaults.network_wait, "network_wait");
+    positive(defaults.default_jitter, "default_jitter");
+    if let (Some(base), Some(budget)) = (defaults.retry_base_delay, defaults.retry_budget)
+        && budget.0 < base.0
+    {
+        errors.push("retry_budget is shorter than retry_base_delay".to_string());
+    }
+    errors
+}
+
+pub fn render_example() -> String {
+    let defaults = ResolvedDefaults::hardcoded();
+    let duration = |value: Duration| humantime::format_duration(value).to_string();
+    [
+        "# topmatic defaults - copy uncommented lines into config.toml to override.".to_string(),
+        "# This file is regenerated automatically; manual edits are overwritten.".to_string(),
+        String::new(),
+        "[defaults]".to_string(),
+        format!("# retries = {}", defaults.retries),
+        format!(
+            "# retry_base_delay = \"{}\"",
+            duration(defaults.retry_base_delay)
+        ),
+        format!("# retry_budget = \"{}\"", duration(defaults.retry_budget)),
+        format!("# network_wait = \"{}\"", duration(defaults.network_wait)),
+        format!(
+            "# default_jitter = \"{}\"",
+            duration(defaults.default_jitter)
+        ),
+    ]
+    .join("\n")
+        + "\n"
+}
+
+pub fn write_example_if_changed(paths: &Paths) -> std::io::Result<()> {
+    crate::util::write_file_if_changed(&paths.example_config_file(), &render_example()).map(|_| ())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -96,13 +261,39 @@ pub fn load_validated(paths: &Paths) -> anyhow::Result<(AppConfig, Vec<String>)>
     let value: toml::Value = toml::from_str(&text)?;
     let mut config = AppConfig::default();
     let mut issues = Vec::new();
+    if let Some(raw) = value.get("defaults") {
+        match Defaults::deserialize(raw.clone()) {
+            Ok(defaults) => {
+                let errors = validate_defaults(&defaults);
+                if errors.is_empty() {
+                    config.defaults = defaults;
+                } else {
+                    issues.push(format!(
+                        "invalid [defaults] ({}): using hardcoded defaults",
+                        errors.join("; ")
+                    ));
+                }
+            }
+            Err(error) => issues.push(format!(
+                "invalid [defaults] ({error}): using hardcoded defaults"
+            )),
+        }
+    }
+    let default_jitter = config.defaults.resolved().default_jitter.as_secs();
     let Some(profiles) = value.get("profiles").and_then(|v| v.as_array()) else {
         return Ok((config, issues));
     };
     for (index, entry) in profiles.iter().enumerate() {
+        let has_jitter = entry
+            .get("schedule")
+            .and_then(|schedule| schedule.get("randomized_delay_sec"))
+            .is_some();
         match Profile::deserialize(entry.clone()) {
             Ok(mut profile) => {
                 profile.schedule.preset = profile.schedule.preset.clone().normalized();
+                if !has_jitter {
+                    profile.schedule.randomized_delay_sec = default_jitter;
+                }
                 if config.profile(&profile.name).is_some() {
                     issues.push(format!(
                         "profile {} defined twice (kept the last)",
@@ -163,6 +354,7 @@ pub fn save(paths: &Paths, config: &AppConfig) -> anyhow::Result<()> {
     let tmp = target.with_extension("toml.tmp");
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, &target)?;
+    write_example_if_changed(paths)?;
     Ok(())
 }
 
@@ -220,6 +412,178 @@ mod tests {
         assert!(config.remove("alpha"));
         assert!(!config.remove("alpha"));
         assert!(config.profiles.is_empty());
+    }
+
+    #[test]
+    fn durations_parse_human_units_and_round_trip() {
+        let defaults: Defaults =
+            toml::from_str("retries = 2\nretry_base_delay = \"90s\"\nnetwork_wait = \"2min 30s\"")
+                .unwrap();
+        assert_eq!(defaults.retries, Some(2));
+        assert_eq!(
+            defaults.retry_base_delay.map(|d| d.0),
+            Some(Duration::from_secs(90))
+        );
+        assert_eq!(
+            defaults.network_wait.map(|d| d.0),
+            Some(Duration::from_secs(150))
+        );
+        let text = toml::to_string(&defaults).unwrap();
+        let back: Defaults = toml::from_str(&text).unwrap();
+        assert_eq!(defaults, back);
+    }
+
+    #[test]
+    fn garbage_durations_are_reported_not_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(
+            paths.config_file(),
+            "[defaults]\nretry_base_delay = \"two weeks \"\n[[profiles]]\nname = \"ok\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\n",
+        )
+        .unwrap();
+
+        let (config, issues) = load_validated(&paths).unwrap();
+        assert_eq!(
+            config.defaults,
+            Defaults::default(),
+            "garbage falls back wholesale"
+        );
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("invalid [defaults]"));
+        assert_eq!(config.profiles.len(), 1, "profiles still load");
+    }
+
+    #[test]
+    fn empty_defaults_resolve_to_hardcoded_and_overrides_apply() {
+        assert_eq!(
+            Defaults::default().resolved(),
+            ResolvedDefaults::hardcoded()
+        );
+
+        let defaults: Defaults = toml::from_str("retries = 1\nretry_budget = \"9min\"").unwrap();
+        let resolved = defaults.resolved();
+        assert_eq!(resolved.retries, 1);
+        assert_eq!(resolved.retry_budget, Duration::from_secs(9 * 60));
+        assert_eq!(
+            resolved.retry_base_delay,
+            ResolvedDefaults::hardcoded().retry_base_delay
+        );
+    }
+
+    #[test]
+    fn invalid_combinations_reject_the_whole_table() {
+        let defaults: Defaults =
+            toml::from_str("retries = 2\nretry_base_delay = \"10min\"\nretry_budget = \"5min\"")
+                .unwrap();
+        assert!(!validate_defaults(&defaults).is_empty());
+        assert_eq!(defaults.resolved(), ResolvedDefaults::hardcoded());
+
+        let too_many: Defaults = toml::from_str("retries = 11").unwrap();
+        assert!(!validate_defaults(&too_many).is_empty());
+
+        let zero: Defaults = toml::from_str("network_wait = \"0s\"").unwrap();
+        assert!(!validate_defaults(&zero).is_empty());
+    }
+
+    #[test]
+    fn retry_policy_default_never_drifts_from_hardcoded_resolution() {
+        assert_eq!(
+            crate::runner::retry::RetryPolicy::from(&ResolvedDefaults::hardcoded()),
+            crate::runner::retry::RetryPolicy::default()
+        );
+    }
+
+    #[test]
+    fn example_file_rewrites_stale_content_and_leaves_fresh_ones_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(paths.example_config_file(), "stale garbage").unwrap();
+
+        write_example_if_changed(&paths).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(paths.example_config_file()).unwrap(),
+            render_example()
+        );
+        let first = std::fs::metadata(paths.example_config_file())
+            .unwrap()
+            .modified()
+            .unwrap();
+        write_example_if_changed(&paths).unwrap();
+        let second = std::fs::metadata(paths.example_config_file())
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(first, second, "idempotent regeneration keeps mtime");
+        assert!(render_example().contains("# retries = 3"));
+        assert!(render_example().contains("default_jitter"));
+    }
+
+    #[test]
+    fn save_also_writes_the_example_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let mut config = AppConfig::default();
+        config.upsert(sample_profile("alpha"));
+        save(&paths, &config).unwrap();
+        assert!(paths.example_config_file().is_file());
+    }
+
+    #[test]
+    fn defaults_round_trip_through_disk_without_polluting_empty_configs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let mut config = AppConfig {
+            defaults: toml::from_str("retries = 2\ndefault_jitter = \"3min\"").unwrap(),
+            profiles: Vec::new(),
+        };
+        config.upsert(sample_profile("alpha"));
+        save(&paths, &config).unwrap();
+        let text = std::fs::read_to_string(paths.config_file()).unwrap();
+        assert!(text.contains("[defaults]"));
+        assert!(text.contains("retries = 2"));
+
+        let clean = AppConfig::default();
+        save(&paths, &clean).unwrap();
+        let clean_text = std::fs::read_to_string(paths.config_file()).unwrap();
+        assert!(
+            !clean_text.contains("[defaults]"),
+            "empty tables stay out of the file"
+        );
+    }
+
+    #[test]
+    fn missing_profile_jitter_inherits_the_global_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(
+            paths.config_file(),
+            "[defaults]\ndefault_jitter = \"9min\"\n\n[[profiles]]\nname = \"bare\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\n\n[[profiles]]\nname = \"explicit\"\nsteps = [\"cargo\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\nrandomized_delay_sec = 120\n",
+        )
+        .unwrap();
+
+        let (config, issues) = load_validated(&paths).unwrap();
+        assert!(issues.is_empty());
+        assert_eq!(
+            config
+                .profile("bare")
+                .unwrap()
+                .schedule
+                .randomized_delay_sec,
+            540
+        );
+        assert_eq!(
+            config
+                .profile("explicit")
+                .unwrap()
+                .schedule
+                .randomized_delay_sec,
+            120,
+            "explicit profile values win over the global default"
+        );
     }
 
     #[test]

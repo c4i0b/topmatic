@@ -51,10 +51,20 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     let (config, issues) = crate::config::load_validated(&paths)?;
+    let _ = crate::config::write_example_if_changed(&paths);
     for issue in &issues {
         failures += 1;
-        println!("FAIL: invalid profile {issue}");
+        println!("FAIL: {issue}");
     }
+    let resolved = config.defaults.resolved();
+    println!(
+        "ok:   run policy: {} retries, {} base delay, {} budget, {} network wait, {} default jitter",
+        resolved.retries,
+        humantime::format_duration(resolved.retry_base_delay),
+        humantime::format_duration(resolved.retry_budget),
+        humantime::format_duration(resolved.network_wait),
+        humantime::format_duration(resolved.default_jitter),
+    );
     println!(
         "ok:   config at {} ({} valid profile(s))",
         paths.config_file().display(),

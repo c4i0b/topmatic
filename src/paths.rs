@@ -27,6 +27,10 @@ impl Paths {
         self.config_dir.join("config.toml")
     }
 
+    pub fn example_config_file(&self) -> PathBuf {
+        self.config_dir.join("config.example.toml")
+    }
+
     pub fn topgrade_config_file(&self) -> PathBuf {
         self.config_dir.join("topgrade.toml")
     }
@@ -71,6 +75,10 @@ mod tests {
             state_dir: PathBuf::from("/state"),
         };
         assert_eq!(paths.config_file(), PathBuf::from("/cfg/config.toml"));
+        assert_eq!(
+            paths.example_config_file(),
+            PathBuf::from("/cfg/config.example.toml")
+        );
         assert_eq!(
             paths.topgrade_config_file(),
             PathBuf::from("/cfg/topgrade.toml")

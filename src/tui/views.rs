@@ -257,7 +257,11 @@ mod tests {
         assert!(footer_hints(&View::Dashboard, false).contains("q quit"));
         assert!(
             footer_hints(
-                &View::Editor(Box::new(EditorState::new(None, Vec::new())),),
+                &View::Editor(Box::new(EditorState::new(
+                    None,
+                    Vec::new(),
+                    crate::domain::schedule::DEFAULT_DELAY_SEC
+                )),),
                 false
             )
             .contains("enter edit/save")

@@ -172,6 +172,7 @@ pub(crate) fn notify_label(policy: NotifyPolicy) -> &'static str {
 mod tests {
     use super::*;
     use crate::domain::profile::{NotifyPolicy, Profile, Scope};
+    use crate::domain::schedule::DEFAULT_DELAY_SEC;
     use crate::domain::schedule::Schedule;
     use crate::domain::schedule::quick_choices;
 
@@ -183,7 +184,11 @@ mod tests {
             notify: NotifyPolicy::OnFailure,
             scope: Scope::User,
         };
-        EditorState::new(Some(&profile), vec!["flatpak".to_string()])
+        EditorState::new(
+            Some(&profile),
+            vec!["flatpak".to_string()],
+            crate::domain::schedule::DEFAULT_DELAY_SEC,
+        )
     }
 
     fn line_text(line: &Line<'_>) -> String {
@@ -193,7 +198,7 @@ mod tests {
     #[test]
     fn body_lines_render_sections_rows_and_save_row_in_order() {
         let mut editor = editing_editor();
-        editor.schedule = quick_choices()[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_DELAY_SEC)[1].1.clone();
         let text: Vec<String> = editor.body_lines().iter().map(line_text).collect();
         let joined = text.join("\n");
 
@@ -223,7 +228,12 @@ mod tests {
     #[test]
     fn editor_tape_golden_steps_header_is_exactly_the_documented_line() {
         let catalog: Vec<String> = (0..162).map(|i| format!("step_{i}")).collect();
-        let editor = EditorState::from_preset(catalog.clone(), catalog, "all-daily");
+        let editor = EditorState::from_preset(
+            catalog.clone(),
+            catalog,
+            "all-daily",
+            crate::domain::schedule::DEFAULT_DELAY_SEC,
+        );
 
         let text: String = editor
             .steps_header()
@@ -239,7 +249,12 @@ mod tests {
     #[test]
     fn editor_tape_golden_steps_header_never_splits_a_token() {
         let catalog: Vec<String> = (0..162).map(|i| format!("step_{i}")).collect();
-        let editor = EditorState::from_preset(catalog.clone(), catalog, "all-daily");
+        let editor = EditorState::from_preset(
+            catalog.clone(),
+            catalog,
+            "all-daily",
+            crate::domain::schedule::DEFAULT_DELAY_SEC,
+        );
         let golden = editor
             .steps_header()
             .iter()

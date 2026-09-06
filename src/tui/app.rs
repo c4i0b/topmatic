@@ -38,6 +38,7 @@ impl App {
     pub fn boot() -> anyhow::Result<Self> {
         let paths = Paths::from_env();
         let (config, issues) = config::load_validated(&paths)?;
+        let _ = config::write_example_if_changed(&paths);
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
@@ -213,6 +214,7 @@ impl App {
                     }
                     KeyCode::Esc => self.view = View::Dashboard,
                     KeyCode::Enter => {
+                        let jitter = self.config.defaults.resolved().default_jitter.as_secs();
                         let editor = if index < presets::PRESETS.len() {
                             let preset = &presets::PRESETS[index];
                             let steps = presets::steps_for(index, &self.catalog);
@@ -220,9 +222,10 @@ impl App {
                                 self.catalog.clone(),
                                 steps,
                                 preset.suggested_name,
+                                jitter,
                             )
                         } else {
-                            editor::EditorState::new(None, self.catalog.clone())
+                            editor::EditorState::new(None, self.catalog.clone(), jitter)
                         };
                         self.view = View::Editor(Box::new(editor));
                     }
@@ -330,9 +333,11 @@ impl App {
             .selected_row()
             .and_then(|row| self.config.profile(&row.name).cloned());
         if let Some(profile) = profile {
+            let jitter = self.config.defaults.resolved().default_jitter.as_secs();
             self.view = View::Editor(Box::new(editor::EditorState::new(
                 Some(&profile),
                 self.catalog.clone(),
+                jitter,
             )));
         }
     }

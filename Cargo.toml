@@ -18,6 +18,7 @@ chrono = { version = "0.4", features = ["serde"] }
 ratatui = "0.29"
 crossterm = "0.28"
 fd-lock = "4"
+humantime = "2"
 
 [dev-dependencies]
 tempfile = "3"

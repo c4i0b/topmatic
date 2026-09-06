@@ -48,6 +48,10 @@ impl Paths {
     pub fn lock_file(&self, profile: &str) -> PathBuf {
         self.state_dir.join(format!("{profile}.lock"))
     }
+
+    pub fn activity_file(&self) -> PathBuf {
+        self.state_dir.join("activity.log")
+    }
 }
 
 fn xdg_dir(var: &str, home: &Path, fallback: &str) -> PathBuf {
@@ -95,5 +99,6 @@ mod tests {
             paths.lock_file("flatpak-daily"),
             PathBuf::from("/state/flatpak-daily.lock")
         );
+        assert_eq!(paths.activity_file(), PathBuf::from("/state/activity.log"));
     }
 }

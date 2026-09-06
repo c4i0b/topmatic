@@ -3,6 +3,7 @@ use std::io;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::domain::profile::Scope;
@@ -32,17 +33,27 @@ pub trait SystemdCtl: Send {
 
 pub struct RealSystemdCtl {
     home: PathBuf,
+    sink: Arc<dyn Fn(&str) + Send + Sync>,
 }
 
 impl RealSystemdCtl {
     pub fn new(home: PathBuf) -> Self {
-        Self { home }
+        Self::with_sink(home, Arc::new(|_| {}))
+    }
+
+    pub fn with_sink(home: PathBuf, sink: Arc<dyn Fn(&str) + Send + Sync>) -> Self {
+        Self { home, sink }
     }
 
     fn systemctl(&self, args: &[&str]) -> Command {
         let mut command = Command::new("systemctl");
         command.arg("--user");
         command.args(args);
+        command
+    }
+
+    fn record(&self, command: Command) -> Command {
+        (self.sink)(&command_line(&command));
         command
     }
 }
@@ -53,24 +64,32 @@ impl SystemdCtl for RealSystemdCtl {
     }
 
     fn daemon_reload(&self) -> io::Result<()> {
-        run_status(self.systemctl(&["daemon-reload"]))
+        run_status(self.record(self.systemctl(&["daemon-reload"])))
     }
 
     fn enable_timer(&self, profile: &str) -> io::Result<()> {
-        run_status(self.systemctl(&["enable", "--now", &units::timer_instance(profile)]))
+        run_status(self.record(self.systemctl(&[
+            "enable",
+            "--now",
+            &units::timer_instance(profile),
+        ])))
     }
 
     fn disable_timer(&self, profile: &str) -> io::Result<()> {
-        run_status(self.systemctl(&["disable", "--now", &units::timer_instance(profile)]))
+        run_status(self.record(self.systemctl(&[
+            "disable",
+            "--now",
+            &units::timer_instance(profile),
+        ])))
     }
 
     fn start_service(&self, profile: &str) -> io::Result<()> {
         let instance = format!("topmatic@{profile}.service");
-        run_status(self.systemctl(&["start", &instance]))
+        run_status(self.record(self.systemctl(&["start", &instance])))
     }
 
     fn stop_all(&self) -> io::Result<()> {
-        run_status(self.systemctl(&["stop", "topmatic@*.service", "topmatic@*.timer"]))
+        run_status(self.record(self.systemctl(&["stop", "topmatic@*.service", "topmatic@*.timer"])))
     }
 
     fn instances(&self) -> Vec<String> {
@@ -98,37 +117,22 @@ impl SystemdCtl for RealSystemdCtl {
     }
 
     fn service_active(&self, profile: &str) -> bool {
-        let mut command = Command::new("systemctl");
-        command.args([
-            "--user",
-            "is-active",
-            &units::timer_instance(profile).replace(".timer", ".service"),
-        ]);
-        run_output(command)
+        let unit = units::timer_instance(profile).replace(".timer", ".service");
+        run_output(self.systemctl(&["is-active", &unit]))
             .map(|output| output.status.success())
             .unwrap_or(false)
     }
 
     fn service_since(&self, profile: &str) -> Option<DateTime<Utc>> {
         let unit = units::timer_instance(profile).replace(".timer", ".service");
-        let mut command = Command::new("systemctl");
-        command.args([
-            "--user",
-            "show",
-            &unit,
-            "-p",
-            "ActiveEnterTimestamp",
-            "--value",
-        ]);
-        let output = run_output(command)?;
+        let output =
+            run_output(self.systemctl(&["show", &unit, "-p", "ActiveEnterTimestamp", "--value"]))?;
         parse_systemd_timestamp(String::from_utf8_lossy(&output.stdout).trim())
     }
 
     fn stop_service(&self, profile: &str) -> io::Result<()> {
         let unit = units::timer_instance(profile).replace(".timer", ".service");
-        let mut command = Command::new("systemctl");
-        command.args(["--user", "stop", &unit]);
-        run_status(command)
+        run_status(self.record(self.systemctl(&["stop", &unit])))
     }
 
     fn linger_enabled(&self) -> Option<bool> {
@@ -148,6 +152,18 @@ impl SystemdCtl for RealSystemdCtl {
 }
 
 const SYSTEMD_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn command_line(command: &Command) -> String {
+    use std::ffi::OsStr;
+    let program = command.get_program();
+    let args: Vec<&OsStr> = command.get_args().collect();
+    let mut parts: Vec<String> = vec![program.to_string_lossy().into_owned()];
+    parts.extend(
+        args.into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned()),
+    );
+    parts.join(" ")
+}
 
 fn run_status(mut command: Command) -> io::Result<()> {
     run_status_with_timeout(&mut command, SYSTEMD_TIMEOUT)
@@ -288,6 +304,7 @@ pub fn validate_on_calendar(calendar: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[test]
     fn parses_next_elapse_timestamps() {
@@ -358,6 +375,51 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("timed out"), "got: {error}");
+    }
+
+    #[test]
+    fn command_line_formats_program_and_args_in_order() {
+        let ctl = RealSystemdCtl::new(PathBuf::from("/home/user"));
+        for (args, expected) in [
+            (
+                &["enable", "--now", "topmatic@all-daily.timer"][..],
+                "systemctl --user enable --now topmatic@all-daily.timer".to_string(),
+            ),
+            (
+                &["daemon-reload"][..],
+                "systemctl --user daemon-reload".to_string(),
+            ),
+            (
+                &["stop", "topmatic@*.service", "topmatic@*.timer"][..],
+                "systemctl --user stop topmatic@*.service topmatic@*.timer".to_string(),
+            ),
+        ] {
+            let line = command_line(&ctl.systemctl(args));
+            assert_eq!(line, expected, "for args {args:?}");
+        }
+    }
+
+    #[test]
+    fn record_forwards_the_command_unchanged_after_sinking_it() {
+        let calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink: Arc<dyn Fn(&str) + Send + Sync> = {
+            let calls = Arc::clone(&calls);
+            Arc::new(move |line| calls.lock().unwrap().push(line.to_string()))
+        };
+        let ctl = RealSystemdCtl::with_sink(PathBuf::from("/home/user"), sink);
+        let original = ctl.systemctl(&["enable", "--now", "topmatic@all-daily.timer"]);
+        let forwarded = ctl.record(original);
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &["systemctl --user enable --now topmatic@all-daily.timer".to_string()],
+            "the sink receives the command line before execution"
+        );
+        assert_eq!(forwarded.get_program(), "systemctl");
+        let args: Vec<_> = forwarded.get_args().map(|a| a.to_string_lossy()).collect();
+        assert_eq!(
+            args,
+            vec!["--user", "enable", "--now", "topmatic@all-daily.timer"]
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, ListItem, Paragraph};
 
+use crate::activity::{ActivityEntry, ActivityKind};
+
 use super::View;
 use super::app::App;
 use super::dashboard;
@@ -15,12 +17,28 @@ use super::overlay::Overlay;
 use super::presets;
 
 pub(crate) fn draw(app: &App, frame: &mut Frame) {
-    let [header, body, footer] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(3),
-        Constraint::Length(2),
-    ])
-    .areas(frame.area());
+    let panel_open = app.activity_panel && matches!(app.view, View::Dashboard);
+    let [header, body, footer] = if panel_open {
+        let [header, body, panel, footer] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Max(8),
+            Constraint::Length(2),
+        ])
+        .areas(frame.area());
+        app.activity_area.set(panel);
+        draw_activity_panel(app, frame, panel);
+        [header, body, footer]
+    } else {
+        app.activity_area.set(Rect::default());
+        let [header, body, footer] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(2),
+        ])
+        .areas(frame.area());
+        [header, body, footer]
+    };
 
     draw_header(app, frame, header);
     match &app.view {
@@ -92,19 +110,39 @@ fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
         Some((format!(" /{}", app.filter.text()), Color::Yellow))
     } else if let Some(job) = &app.in_flight {
         in_flight_prefix(job)
+    } else if !app.message.is_empty() {
+        Some((format!(" {} ", app.message), Color::Red))
     } else {
-        status_prefix(&app.message, &app.last_action)
+        app.activity
+            .lock()
+            .unwrap()
+            .tail()
+            .and_then(activity_prefix)
     };
-    let styled = match prefix {
-        Some((text, color)) => vec![Span::styled(text, Style::new().fg(color))],
-        None => Vec::new(),
-    };
-    let mut spans = styled;
-    spans.push(Span::styled(
-        format!(" {hints}"),
-        Style::new().fg(Color::DarkGray),
-    ));
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    match prefix {
+        Some((text, color)) => {
+            let [status_area, hints_area] =
+                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![Span::styled(text, Style::new().fg(color))])),
+                status_area,
+            );
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![Span::styled(
+                    format!(" {hints}"),
+                    Style::new().fg(Color::DarkGray),
+                )])),
+                hints_area,
+            );
+        }
+        None => frame.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                format!(" {hints}"),
+                Style::new().fg(Color::DarkGray),
+            )])),
+            area,
+        ),
+    }
 }
 
 const SPINNER_FRAMES: [char; 4] = ['◐', '◓', '◑', '◒'];
@@ -121,14 +159,66 @@ pub(crate) fn in_flight_prefix(job: &super::app::BackgroundJob) -> Option<(Strin
     ))
 }
 
-pub(crate) fn status_prefix(message: &str, last_action: &str) -> Option<(String, Color)> {
-    if !message.is_empty() {
-        Some((format!(" {message} "), Color::Red))
-    } else if !last_action.is_empty() {
-        Some((format!(" {last_action} "), Color::Yellow))
-    } else {
-        None
+pub(crate) fn activity_prefix(entry: &ActivityEntry) -> Option<(String, Color)> {
+    Some((format!(" {} ", entry.text), activity_color(entry.kind)))
+}
+
+pub(crate) fn activity_color(kind: ActivityKind) -> Color {
+    match kind {
+        ActivityKind::Error => Color::Red,
+        ActivityKind::Command => Color::Magenta,
+        ActivityKind::Action => Color::Yellow,
     }
+}
+
+fn activity_lines(
+    entries: &[ActivityEntry],
+    height: usize,
+    offset: usize,
+) -> Vec<(ActivityKind, String, String)> {
+    let total = entries.len();
+    let offset = offset.min(total.saturating_sub(1));
+    let end = total - offset;
+    let start = end.saturating_sub(height);
+    entries[start..end]
+        .iter()
+        .map(|entry| {
+            (
+                entry.kind,
+                entry.at.format("%H:%M:%S").to_string(),
+                entry.text.clone(),
+            )
+        })
+        .collect()
+}
+
+fn draw_activity_panel(app: &App, frame: &mut Frame, area: Rect) {
+    let height = area.height.saturating_sub(1) as usize;
+    let snapshot: Vec<ActivityEntry> = app
+        .activity
+        .lock()
+        .unwrap()
+        .entries()
+        .iter()
+        .cloned()
+        .collect();
+    let lines = activity_lines(&snapshot, height, app.activity_scroll);
+    let title = if app.activity_scroll > 0 {
+        format!(" activity ({} back)", app.activity_scroll)
+    } else {
+        " activity".to_string()
+    };
+    let lines = lines
+        .into_iter()
+        .map(|(kind, time, text)| {
+            Line::from(vec![
+                Span::styled(time, Style::new().fg(Color::DarkGray)),
+                Span::styled(format!(" {text}"), Style::new().fg(activity_color(kind))),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let paragraph = Paragraph::new(lines).block(Block::bordered().title(title));
+    frame.render_widget(paragraph, area);
 }
 
 pub(crate) fn name_popup_hint(value: &str) -> &'static str {
@@ -144,7 +234,9 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
         return "filter: type…  Enter accept  Esc clear  ↑↓ move";
     }
     match view {
-        View::Dashboard => "/ filter  n new  e edit  d delete  r run now  l logs  ? help  q quit",
+        View::Dashboard => {
+            "L activity  / filter  n new  e edit  d delete  r run now  l logs  ? help  q quit"
+        }
         View::Editor(_) => {
             "↑↓ move  enter edit/save  tab section  / filter steps  esc back  q quit"
         }
@@ -195,6 +287,33 @@ pub(crate) struct KeyGroup<'a> {
     pub keys: &'a [(&'a str, &'a str)],
 }
 
+#[test]
+fn activity_lines_tail_anchor_and_scroll() {
+    use crate::activity::{ActivityEntry, ActivityKind};
+
+    let now = chrono::Local::now();
+    let entries: Vec<ActivityEntry> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|t| ActivityEntry {
+            at: now,
+            kind: ActivityKind::Action,
+            text: t.to_string(),
+        })
+        .collect();
+    let lines = activity_lines(&entries, 2, 0);
+    assert_eq!(lines.len(), 2, "offset 0 returns the last height entries");
+    assert_eq!(lines[0].2, "c");
+    assert_eq!(lines[1].2, "d");
+    let lines = activity_lines(&entries, 2, 1);
+    assert_eq!(lines[0].2, "b");
+    assert_eq!(lines[1].2, "c");
+    assert_eq!(
+        activity_lines(&entries, 10, 0).len(),
+        4,
+        "height greater than total returns all entries"
+    );
+}
+
 fn group_lines(group: &KeyGroup) -> Vec<Line<'static>> {
     let width = group
         .keys
@@ -227,6 +346,7 @@ pub(crate) fn dashboard_help() -> Vec<Line<'static>> {
                 ("d", "delete profile — always asks first"),
                 ("r", "run now, opens the live view"),
                 ("l", "browse run logs"),
+                ("L", "toggle the activity panel"),
                 ("/", "filter profiles by name"),
             ],
         },
@@ -318,26 +438,26 @@ mod tests {
     use crate::tui::editor::EditorState;
 
     #[test]
-    fn status_prefix_prioritizes_errors_then_info() {
+    fn activity_prefix_styles_each_kind_with_trailing_space() {
+        let entry = |kind| ActivityEntry {
+            at: chrono::Local::now(),
+            kind,
+            text: "started all-daily".to_string(),
+        };
         assert_eq!(
-            status_prefix("", ""),
-            None,
-            "nothing to say renders nothing"
-        );
-        assert_eq!(
-            status_prefix("a FAILED (exit 1)", ""),
-            Some((" a FAILED (exit 1) ".to_string(), Color::Red)),
+            activity_prefix(&entry(ActivityKind::Error)),
+            Some((" started all-daily ".to_string(), Color::Red)),
             "errors render in red"
         );
         assert_eq!(
-            status_prefix("", "deleted all-daily"),
-            Some((" deleted all-daily ".to_string(), Color::Yellow)),
-            "info renders in yellow"
+            activity_prefix(&entry(ActivityKind::Action)),
+            Some((" started all-daily ".to_string(), Color::Yellow)),
+            "actions render in yellow"
         );
         assert_eq!(
-            status_prefix("start failed: boom", "started all-daily"),
-            Some((" start failed: boom ".to_string(), Color::Red)),
-            "an error outranks the last action"
+            activity_prefix(&entry(ActivityKind::Command)),
+            Some((" started all-daily ".to_string(), Color::Magenta)),
+            "commands render in magenta"
         );
     }
 
@@ -369,6 +489,7 @@ mod tests {
             "edit the selected profile",
             "delete profile",
             "run now",
+            "toggle the activity panel",
             "filter profiles",
         ] {
             assert!(text.contains(action), "missing {action:?}:\n{text}");

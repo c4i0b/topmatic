@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 
 use ratatui::layout::Rect;
 
+use crate::activity::{ActivityKind, ActivityLog};
 use crate::config::{self, AppConfig};
 use crate::paths::Paths;
 use crate::runner::{read_status, resolve};
@@ -22,6 +23,11 @@ use super::presets;
 use super::views;
 
 const MESSAGE_TTL_TICKS: u64 = 25;
+
+pub struct ResolvedBins {
+    topmatic_bin: PathBuf,
+    topgrade_bin: Option<PathBuf>,
+}
 
 pub struct BackgroundJob {
     pub label: String,
@@ -52,9 +58,10 @@ pub struct App {
     pub message: String,
     pub seen_message: String,
     pub message_expires_at_tick: u64,
-    pub last_action: String,
-    pub seen_last_action: String,
-    pub last_action_expires_at_tick: u64,
+    pub activity: Arc<Mutex<ActivityLog>>,
+    pub activity_panel: bool,
+    pub activity_scroll: usize,
+    pub activity_area: Cell<Rect>,
     pub confirm: Option<(String, Overlay)>,
     pub help: Option<Overlay>,
     pub should_quit: bool,
@@ -69,9 +76,23 @@ impl App {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-        let ctl: Box<dyn SystemdCtl> = Box::new(RealSystemdCtl::new(home.clone()));
-        let controller_factory: Box<dyn Fn() -> Box<dyn SystemdCtl>> =
-            Box::new(move || Box::new(RealSystemdCtl::new(home.clone())));
+        let activity = Arc::new(Mutex::new(ActivityLog::with_file(
+            crate::activity::DEFAULT_CAPACITY,
+            paths.activity_file(),
+        )));
+        let ctl: Box<dyn SystemdCtl> = Box::new(RealSystemdCtl::with_sink(
+            home.clone(),
+            command_sink(&activity),
+        ));
+        let controller_factory: Box<dyn Fn() -> Box<dyn SystemdCtl>> = {
+            let activity = Arc::clone(&activity);
+            Box::new(move || {
+                Box::new(RealSystemdCtl::with_sink(
+                    home.clone(),
+                    command_sink(&activity),
+                ))
+            })
+        };
         let topmatic_bin = std::env::current_exe()?;
         let path_env = std::env::var("PATH").unwrap_or_default();
         let topgrade_bin = resolve::find_in_path("topgrade", &path_env);
@@ -82,8 +103,11 @@ impl App {
             paths,
             ctl,
             controller_factory,
-            topmatic_bin,
-            topgrade_bin,
+            activity,
+            ResolvedBins {
+                topmatic_bin,
+                topgrade_bin,
+            },
         );
         app.catalog = app.load_catalog();
         Ok(app)
@@ -95,9 +119,11 @@ impl App {
         paths: Paths,
         ctl: Box<dyn SystemdCtl>,
         controller_factory: Box<dyn Fn() -> Box<dyn SystemdCtl>>,
-        topmatic_bin: PathBuf,
-        topgrade_bin: Option<PathBuf>,
+        activity: Arc<Mutex<ActivityLog>>,
+        bins: ResolvedBins,
     ) -> Self {
+        let topmatic_bin = bins.topmatic_bin;
+        let topgrade_bin = bins.topgrade_bin;
         let mut app = Self {
             config,
             paths,
@@ -116,21 +142,22 @@ impl App {
             message: String::new(),
             seen_message: String::new(),
             message_expires_at_tick: 0,
-            last_action: String::new(),
-            seen_last_action: String::new(),
-            last_action_expires_at_tick: 0,
+            activity,
+            activity_panel: false,
+            activity_scroll: 0,
+            activity_area: Cell::new(Rect::default()),
             confirm: None,
             help: None,
             should_quit: false,
             tick: 0,
         };
         let report = systemd_sync::sync(&app.config, &app.topmatic_bin, app.ctl.as_ref());
-        app.message = if !report.errors.is_empty() {
-            format!("sync errors: {}", report.errors.join("; "))
-        } else {
-            String::new()
-        };
-        app.set_last_action(format!(
+        if !report.errors.is_empty() {
+            let detail = format!("sync errors: {}", report.errors.join("; "));
+            app.message.clone_from(&detail);
+            app.log(ActivityKind::Error, detail);
+        }
+        let synced_text = format!(
             "synced{}{}{}{}",
             if report.templates_installed {
                 ", installed unit templates"
@@ -158,12 +185,13 @@ impl App {
                     report.ignored_foreign.len()
                 )
             }
-        ));
+        );
+        app.log(ActivityKind::Action, synced_text.clone());
         if !issues.is_empty() {
             app.message = format!(
                 "skipped {} invalid profile(s); run topmatic doctor — {}",
                 issues.len(),
-                app.last_action
+                synced_text
             );
         }
         if app.topgrade_bin.is_none() {
@@ -215,8 +243,8 @@ impl App {
         self.clamp_selection();
     }
 
-    pub fn set_last_action(&mut self, action: impl Into<String>) {
-        self.last_action = action.into();
+    pub fn log(&mut self, kind: ActivityKind, text: impl Into<String>) {
+        self.activity.lock().unwrap().log(kind, text.into());
     }
 
     pub fn spawn_background(
@@ -257,8 +285,11 @@ impl App {
             return false;
         };
         match outcome {
-            JobOutcome::Success(action) => self.set_last_action(action),
-            JobOutcome::Error(message) => self.message = message,
+            JobOutcome::Success(action) => self.log(ActivityKind::Action, action),
+            JobOutcome::Error(message) => {
+                self.log(ActivityKind::Error, message.clone());
+                self.message = message;
+            }
         }
         self.rebuild_rows();
         true
@@ -272,13 +303,6 @@ impl App {
         } else if !self.message.is_empty() && self.tick >= self.message_expires_at_tick {
             self.message.clear();
             self.seen_message.clear();
-        }
-        if self.last_action != self.seen_last_action {
-            self.seen_last_action = self.last_action.clone();
-            self.last_action_expires_at_tick = self.tick + MESSAGE_TTL_TICKS;
-        } else if !self.last_action.is_empty() && self.tick >= self.last_action_expires_at_tick {
-            self.last_action.clear();
-            self.seen_last_action.clear();
         }
         self.tick = self.tick.wrapping_add(1);
         let follow_open = matches!(&self.view, View::Logs(state) if state.follow);
@@ -309,13 +333,15 @@ impl App {
                 .is_some_and(|outcome| since.is_some_and(|start| outcome.finished_at > start));
             match (status, finished_after_start) {
                 (Some(outcome), true) if outcome.success => {
-                    self.set_last_action(format!("{name} finished ok"));
+                    self.log(ActivityKind::Action, format!("{name} finished ok"));
                 }
                 (Some(outcome), true) => {
-                    self.message =
+                    let detail =
                         format!("{name} FAILED (exit {:?})", outcome.exit_code.unwrap_or(1));
+                    self.message.clone_from(&detail);
+                    self.log(ActivityKind::Error, detail);
                 }
-                _ => self.set_last_action(format!("{name} stopped")),
+                _ => self.log(ActivityKind::Action, format!("{name} stopped")),
             }
         }
         if let View::Logs(state) = &mut self.view
@@ -453,7 +479,10 @@ impl App {
             }
             View::Editor(mut state) => match state.handle_key(key) {
                 editor::EditorEvent::Cancel => {
-                    self.set_last_action(cancel_message(state.is_dirty()));
+                    let discarded = cancel_message(state.is_dirty());
+                    if !discarded.is_empty() {
+                        self.log(ActivityKind::Action, discarded);
+                    }
                 }
                 editor::EditorEvent::RequestSave => self.save_profile(*state),
                 editor::EditorEvent::Quit => self.should_quit = true,
@@ -498,12 +527,15 @@ impl App {
             }
             KeyCode::Enter => self.open_editor_for_selected(),
             KeyCode::Esc => {
-                if self.filter.is_engaged() {
+                if self.activity_panel {
+                    self.activity_panel = false;
+                } else if self.filter.is_engaged() {
                     self.filter.edit = LineEdit::new(String::new());
                     self.selected = 0;
                     self.list_scroll = 0;
                 }
             }
+            KeyCode::Char('L') => self.toggle_activity_panel(),
             KeyCode::Char(c) => match c.to_ascii_lowercase() {
                 '/' => self.filter.start(),
                 '?' => {
@@ -536,7 +568,42 @@ impl App {
         }
     }
 
+    pub fn toggle_activity_panel(&mut self) {
+        if self.activity_panel {
+            self.activity_panel = false;
+        } else {
+            self.activity_panel = true;
+            self.activity_scroll = 0;
+        }
+    }
+
+    fn scroll_activity(&mut self, delta: usize) {
+        let total = self.activity.lock().unwrap().len();
+        let max = total.saturating_sub(1);
+        self.activity_scroll = (self.activity_scroll + delta).min(max);
+    }
+
+    fn scroll_activity_back(&mut self, delta: usize) {
+        self.activity_scroll = self.activity_scroll.saturating_sub(delta);
+    }
+
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.activity_panel {
+            let area = self.activity_area.get();
+            let over_panel = area.height > 0
+                && mouse.column >= area.x
+                && mouse.column < area.x + area.width
+                && mouse.row >= area.y
+                && mouse.row < area.y + area.height;
+            if over_panel {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.scroll_activity_back(1),
+                    MouseEventKind::ScrollDown => self.scroll_activity(1),
+                    _ => {}
+                }
+                return;
+            }
+        }
         let list = self.list_area.get();
         match mouse.kind {
             MouseEventKind::ScrollUp => {
@@ -614,7 +681,6 @@ impl App {
             self.view = View::Editor(Box::new(state));
             return;
         }
-        self.set_last_action(format!("saving {}…", profile.name));
         let name = profile.name.clone();
         self.spawn_sync_job(format!("saving {name}"), move |report| {
             if report.errors.is_empty() {
@@ -631,7 +697,6 @@ impl App {
             self.message = format!("save failed: {error}");
         }
         let _ = crate::systemd::sync::purge_profile_state(&self.paths, name);
-        self.set_last_action(format!("deleting {name}…"));
         let name = name.to_string();
         self.spawn_sync_job(format!("deleting {name}"), move |report| {
             if report.errors.is_empty() {
@@ -652,18 +717,26 @@ impl App {
         };
         match self.ctl.start_service(&name) {
             Ok(()) => {
-                self.set_last_action(format!("started {name}"));
+                self.log(ActivityKind::Action, format!("started {name}"));
                 self.rebuild_rows();
                 self.view = View::Logs(logs::LogsState::follow(&name));
             }
-            Err(error) => self.message = format!("start failed: {error}"),
+            Err(error) => {
+                let detail = format!("start failed: {error}");
+                self.message.clone_from(&detail);
+                self.log(ActivityKind::Error, detail);
+            }
         }
     }
 
     fn stop_run(&mut self, profile: &str) {
         match self.ctl.stop_service(profile) {
-            Ok(()) => self.set_last_action(format!("stopping {profile}…")),
-            Err(error) => self.message = format!("stop failed: {error}"),
+            Ok(()) => self.log(ActivityKind::Action, format!("stopped {profile}")),
+            Err(error) => {
+                let detail = format!("stop failed: {error}");
+                self.message.clone_from(&detail);
+                self.log(ActivityKind::Error, detail);
+            }
         }
     }
 
@@ -682,6 +755,16 @@ pub(crate) fn cancel_message(dirty: bool) -> String {
     }
 }
 
+fn command_sink(activity: &Arc<Mutex<ActivityLog>>) -> Arc<dyn Fn(&str) + Send + Sync> {
+    let activity = Arc::clone(activity);
+    Arc::new(move |line| {
+        activity
+            .lock()
+            .unwrap()
+            .log(ActivityKind::Command, line.to_string())
+    })
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -698,6 +781,30 @@ mod tests {
         services:
             Arc<std::sync::Mutex<std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>>>,
         unit_dir: PathBuf,
+        activity: Arc<Mutex<ActivityLog>>,
+    }
+
+    impl Harness {
+        fn action_texts(&self) -> Vec<String> {
+            self.activity
+                .lock()
+                .unwrap()
+                .entries()
+                .iter()
+                .filter(|entry| entry.kind == ActivityKind::Action)
+                .map(|entry| entry.text.clone())
+                .collect()
+        }
+
+        fn all_texts(&self) -> Vec<String> {
+            self.activity
+                .lock()
+                .unwrap()
+                .entries()
+                .iter()
+                .map(|entry| entry.text.clone())
+                .collect()
+        }
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -739,14 +846,20 @@ mod tests {
                 ))
             })
         };
+        let activity = Arc::new(Mutex::new(ActivityLog::in_memory(
+            crate::activity::DEFAULT_CAPACITY,
+        )));
         let mut app = App::assemble(
             crate::config::load_validated(&paths).unwrap().0,
             Vec::new(),
             paths,
             Box::new(ctl),
             factory,
-            PathBuf::from("/bin/topmatic"),
-            Some(PathBuf::from("/nonexistent/topgrade")),
+            Arc::clone(&activity),
+            ResolvedBins {
+                topmatic_bin: PathBuf::from("/bin/topmatic"),
+                topgrade_bin: Some(PathBuf::from("/nonexistent/topgrade")),
+            },
         );
         app.catalog = presets::fallback_catalog();
         (
@@ -756,6 +869,7 @@ mod tests {
                 calls,
                 services,
                 unit_dir,
+                activity,
             },
         )
     }
@@ -784,7 +898,14 @@ mod tests {
     #[test]
     fn assemble_syncs_timers_and_builds_rows() {
         let (app, harness) = harness(&[profile("all-daily")]);
-        assert!(app.last_action.contains("synced"));
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("synced")),
+            "boot records the sync in the activity log: {:?}",
+            harness.action_texts()
+        );
         assert_eq!(app.rows.len(), 1);
         assert_eq!(app.rows[0].name, "all-daily");
         assert!(
@@ -907,13 +1028,21 @@ mod tests {
             "save defers the systemd sync behind a busy indicator"
         );
         assert!(
-            app.last_action.contains("saving all-daily"),
-            "the footer reports progress while the sync runs: {:?}",
-            app.last_action
+            app.in_flight
+                .as_ref()
+                .is_some_and(|job| job.label.contains("saving all-daily")),
+            "the busy indicator carries the progress label"
         );
         settle(&mut app);
         assert!(app.in_flight.is_none(), "the busy indicator clears");
-        assert!(app.last_action.contains("saved all-daily"));
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("saved all-daily")),
+            "the finished save lands in the activity log: {:?}",
+            harness.action_texts()
+        );
         assert!(
             harness
                 .calls
@@ -934,7 +1063,14 @@ mod tests {
         save_editor_profile(&mut app, "all-daily", "all-daily");
         settle(&mut app);
 
-        assert!(app.last_action.contains("saved all-daily"));
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("saved all-daily")),
+            "the preset save is recorded in the activity log: {:?}",
+            harness.action_texts()
+        );
         assert!(matches!(app.view, View::Dashboard));
         let saved = crate::config::load(&app.paths).unwrap();
         assert_eq!(saved.profiles.len(), 1);
@@ -952,7 +1088,7 @@ mod tests {
 
     #[test]
     fn editing_keeps_the_same_name_and_saves_in_place() {
-        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Enter));
         assert!(matches!(app.view, View::Editor(_)));
         save_editor_profile(&mut app, "all-daily", "all-daily");
@@ -965,7 +1101,14 @@ mod tests {
             "no duplicate profile on in-place save"
         );
         assert_eq!(saved.profiles[0].name, "all-daily");
-        assert!(app.last_action.contains("saved all-daily"));
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("saved all-daily")),
+            "the in-place save is recorded: {:?}",
+            harness.action_texts()
+        );
         assert!(
             matches!(app.view, View::Dashboard),
             "edit-with-same-name must return to the dashboard, not stay blocked"
@@ -974,7 +1117,7 @@ mod tests {
 
     #[test]
     fn editing_renames_the_profile_and_purges_its_state() {
-        let (mut app, _harness) = harness(&[profile("old")]);
+        let (mut app, harness) = harness(&[profile("old")]);
         std::fs::create_dir_all(app.paths.logs_dir("old")).unwrap();
         std::fs::write(app.paths.logs_dir("old").join("run.log"), "log").unwrap();
 
@@ -983,7 +1126,14 @@ mod tests {
         save_editor_profile(&mut app, "old", "new");
         settle(&mut app);
 
-        assert!(app.last_action.contains("saved new"));
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("saved new")),
+            "the rename records the new name: {:?}",
+            harness.action_texts()
+        );
         let saved = crate::config::load(&app.paths).unwrap();
         assert!(saved.profile("new").is_some());
         assert!(saved.profile("old").is_none());
@@ -1044,21 +1194,29 @@ mod tests {
     }
 
     #[test]
-    fn transient_feedback_expires_after_the_ttl() {
+    fn message_feedback_expires_after_the_ttl_while_activity_is_kept() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
-        assert!(app.last_action.contains("started all-daily"));
-        app.on_tick();
-        app.last_action_expires_at_tick = app.tick.saturating_sub(1);
-        app.on_tick();
-        assert!(app.last_action.is_empty(), "info feedback fades away");
-
-        app.set_last_action("boom");
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("started all-daily")),
+            "starting a run is recorded in the activity log: {:?}",
+            harness.action_texts()
+        );
         app.message = "critical: something failed".to_string();
         app.on_tick();
         app.message_expires_at_tick = app.tick.saturating_sub(1);
         app.on_tick();
-        assert!(app.message.is_empty(), "error feedback fades away too");
+        assert!(app.message.is_empty(), "transient feedback fades away");
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("started all-daily")),
+            "the activity log keeps the action after the transient fades"
+        );
         drop(harness);
     }
 
@@ -1123,7 +1281,7 @@ mod tests {
 
     #[test]
     fn confirmed_delete_removes_profile_and_state() {
-        let (mut app, _harness) = harness(&[profile("gone")]);
+        let (mut app, harness) = harness(&[profile("gone")]);
         std::fs::create_dir_all(app.paths.logs_dir("gone")).unwrap();
 
         app.handle_key(key(KeyCode::Char('d')));
@@ -1132,15 +1290,16 @@ mod tests {
         app.handle_key(key(KeyCode::Enter));
         settle(&mut app);
 
+        let actions = harness.action_texts();
         assert!(
-            app.last_action.contains("deleted gone"),
+            actions.iter().any(|text| text.contains("deleted gone")),
             "delete reports as an action: {:?}",
-            app.last_action
+            actions
         );
         assert!(
-            app.last_action.contains("recreate with n"),
+            actions.iter().any(|text| text.contains("recreate with n")),
             "delete points at the way back: {:?}",
-            app.last_action
+            actions
         );
         assert!(matches!(app.view, View::Dashboard));
         let saved = crate::config::load(&app.paths).unwrap();
@@ -1152,7 +1311,14 @@ mod tests {
     fn run_now_starts_the_service_through_the_manager() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
-        assert!(app.last_action.contains("started all-daily"));
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("started all-daily")),
+            "run now is recorded in the activity log: {:?}",
+            harness.action_texts()
+        );
         assert!(
             harness
                 .calls
@@ -1221,7 +1387,14 @@ mod tests {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
         app.handle_key(key(KeyCode::Char('x')));
-        assert!(app.last_action.contains("stopping all-daily"));
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("stopped all-daily")),
+            "x records the stop: {:?}",
+            harness.action_texts()
+        );
         assert!(
             harness
                 .calls
@@ -1240,7 +1413,14 @@ mod tests {
         harness.services.lock().unwrap().remove("all-daily");
         write_status(&app.paths, "all-daily", true, 0);
         app.on_tick();
-        assert!(app.last_action.contains("all-daily finished ok"));
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("all-daily finished ok")),
+            "a finished run records as an action: {:?}",
+            harness.action_texts()
+        );
         assert!(!app.rows[0].running);
         match &app.view {
             View::Logs(state) => assert!(state.follow_header.contains("finished ok")),
@@ -1256,6 +1436,14 @@ mod tests {
         write_status(&app.paths, "all-daily", false, 3);
         app.on_tick();
         assert!(app.message.contains("FAILED (exit 3)"));
+        assert!(
+            harness
+                .all_texts()
+                .iter()
+                .any(|text| text.contains("FAILED (exit 3)")),
+            "a failed run is recorded in the activity log too: {:?}",
+            harness.all_texts()
+        );
     }
 
     #[test]
@@ -1264,11 +1452,13 @@ mod tests {
         app.handle_key(key(KeyCode::Char('r')));
         harness.services.lock().unwrap().remove("all-daily");
         app.on_tick();
-        let first = app.last_action.clone();
+        let count = |all: &[String]| all.iter().filter(|t| t.contains("finished ok")).count();
+        let first = count(&harness.action_texts());
         app.on_tick();
         app.on_tick();
         assert_eq!(
-            app.last_action, first,
+            count(&harness.action_texts()),
+            first,
             "the transition fires once, not on every tick"
         );
     }
@@ -1293,9 +1483,139 @@ mod tests {
         assert!(app.should_quit);
     }
 
+    fn mouse(
+        kind: crossterm::event::MouseEventKind,
+        column: u16,
+        row: u16,
+    ) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn dashboard_l_toggles_the_activity_panel() {
+        let (mut app, _harness) = harness(&[]);
+        assert!(!app.activity_panel);
+        app.handle_key(key(KeyCode::Char('L')));
+        assert!(app.activity_panel, "L toggles the panel on");
+        app.handle_key(key(KeyCode::Char('L')));
+        assert!(!app.activity_panel, "L toggles the panel off again");
+    }
+
+    #[test]
+    fn toggle_activity_panel_resets_scroll() {
+        let (mut app, _harness) = harness(&[]);
+        app.activity_scroll = 5;
+        app.handle_key(key(KeyCode::Char('L')));
+        assert_eq!(
+            app.activity_scroll, 0,
+            "opening the panel resets scroll to newest"
+        );
+    }
+
+    #[test]
+    fn dashboard_esc_closes_the_activity_panel_before_engaging_filter() {
+        let (mut app, _harness) = harness(&[]);
+        app.activity_panel = true;
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.activity_panel, "esc closes the activity panel");
+        app.handle_key(key(KeyCode::Char('/')));
+        assert!(app.filter.active, "filter is open after esc-closed panel");
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.filter.active);
+    }
+
+    #[test]
+    fn mouse_wheel_inside_the_activity_panel_scrolls_it() {
+        let (mut app, harness) = harness(&[]);
+        app.activity_panel = true;
+        app.activity_area
+            .set(ratatui::layout::Rect::new(0, 10, 80, 5));
+        harness
+            .activity
+            .lock()
+            .unwrap()
+            .log(ActivityKind::Action, "one");
+        harness
+            .activity
+            .lock()
+            .unwrap()
+            .log(ActivityKind::Action, "two");
+        assert_eq!(
+            app.activity_scroll, 0,
+            "panel starts showing the newest entries"
+        );
+        app.handle_mouse(mouse(crossterm::event::MouseEventKind::ScrollDown, 5, 12));
+        assert_eq!(app.activity_scroll, 1, "wheel down moves one entry back");
+        app.handle_mouse(mouse(crossterm::event::MouseEventKind::ScrollUp, 5, 12));
+        assert_eq!(app.activity_scroll, 0, "wheel up scrolls forward again");
+    }
+
+    #[test]
+    fn activity_scroll_clamps_to_entries_minus_one() {
+        let (mut app, harness) = harness(&[]);
+        let baseline = harness.activity.lock().unwrap().len();
+        app.activity_panel = true;
+        app.activity_area
+            .set(ratatui::layout::Rect::new(0, 10, 80, 5));
+        harness
+            .activity
+            .lock()
+            .unwrap()
+            .log(ActivityKind::Action, "only");
+        assert_eq!(harness.activity.lock().unwrap().len(), baseline + 1);
+        app.handle_mouse(mouse(crossterm::event::MouseEventKind::ScrollDown, 5, 12));
+        assert_eq!(
+            app.activity_scroll,
+            app.activity.lock().unwrap().len().saturating_sub(1),
+            "clamp prevents scrolling past the earliest entry"
+        );
+    }
+
     #[test]
     fn cancel_feedback_only_when_something_was_lost() {
         assert_eq!(cancel_message(false), "");
         assert_eq!(cancel_message(true), "editor closed — changes discarded");
+    }
+
+    #[test]
+    fn console_cancel_records_a_log_entry_when_edits_were_dropped() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        let entries_before = harness.all_texts().len();
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(
+            harness.all_texts().len(),
+            entries_before,
+            "backing out of a clean editor logs nothing"
+        );
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Char(' ')));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(
+            harness
+                .all_texts()
+                .iter()
+                .any(|text| text.contains("changes discarded")),
+            "dropping edits lands in the activity log"
+        );
+    }
+
+    #[test]
+    fn command_sink_forwards_lines_into_the_activity_log() {
+        let activity = Arc::new(Mutex::new(ActivityLog::in_memory(16)));
+        let sink = command_sink(&activity);
+        sink("systemctl --user enable --now topmatic@all-daily.timer");
+        let log = activity.lock().unwrap();
+        let entry = log.tail().expect("the sink records the command");
+        assert_eq!(entry.kind, ActivityKind::Command);
+        assert_eq!(
+            entry.text,
+            "systemctl --user enable --now topmatic@all-daily.timer"
+        );
     }
 }

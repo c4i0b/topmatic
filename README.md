@@ -62,11 +62,10 @@ Two safety guarantees around the sync:
 ## Development
 
 ```sh
-just check          # fmt + clippy + tests
-just container-gate # same gate inside the devcontainer image
+just check # fmt + clippy + tests
 ```
 
-Tests run anywhere (stubs instead of real topgrade/systemd). Task runner is [just](https://github.com/casey/just); `just --list` shows everything, including `just screenshots` to regenerate the README images from `docs/assets/*.tape` with [vhs](https://github.com/charmbracelet/vhs).
+`just --list` shows every recipe. Tests use stubs instead of real topgrade/systemd, so they run anywhere a Rust toolchain exists; the only exception is `tests/systemd_integration.rs`, which needs a real user systemd and skips otherwise.
 
 ## License
 

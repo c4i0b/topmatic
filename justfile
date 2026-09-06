@@ -37,26 +37,6 @@ deploy:
 fixture:
     topgrade --help > tests/fixtures/topgrade_help.txt
 
-# Regenerate README screenshots from the vhs tapes (needs vhs + ffmpeg; installs in the topmatic-shots distrobox)
-screenshots:
-    distrobox-enter -n topmatic-shots -- bash -lc 'export PATH="$HOME/.cargo/bin:/run/host/usr/bin:$PATH" && vhs docs/assets/dashboard.tape && vhs docs/assets/editor.tape && ffmpeg -y -loglevel error -i target/tapes/dashboard.gif -vf reverse -frames:v 1 docs/assets/dashboard.png && ffmpeg -y -loglevel error -i target/tapes/editor.gif -vf reverse -frames:v 1 docs/assets/editor.png'
-
-# Build the devcontainer image
-image:
-    podman build -t topmatic-dev .devcontainer/
-
-# Interactive shell inside the devcontainer (volume mounts mirror container-gate)
-shell: image
-    podman run --rm -it --userns=keep-id \
-        -v topmatic-cargo:/usr/local/cargo \
-        -v "$PWD:/workspace" -w /workspace topmatic-dev
-
-# Quality gate inside the devcontainer image (deps cache persists in topmatic-cargo volume)
-container-gate: image
-    podman run --rm --userns=keep-id \
-        -v topmatic-cargo:/usr/local/cargo \
-        -v "$PWD:/workspace" -w /workspace topmatic-dev just check
-
 # Host-side dry-run verification of a profile
 verify profile:
     ~/.cargo/bin/topmatic run {{profile}} --dry-run

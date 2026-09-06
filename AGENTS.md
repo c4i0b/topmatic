@@ -90,7 +90,7 @@ User-level update scheduler on top of topgrade, no sudo. topgrade always runs wi
 - bd for tasks (`ready`/`--claim`/`close`), `bd remember` for decisions, `bd prime` to load context
 - Code, commits, messages: English. No comments in source (`#[command(about)]` for clap help)
 - TDD; **fixtures must be captured from real tool output, never invented** (a fabricated timestamp format once hid a bug)
-- Tests never touch real systemd/topgrade (stubs in tempdirs); container = gate, host = integration (`just verify <profile>`)
+- Tests never touch real systemd/topgrade (stubs in tempdirs); host = integration (`just verify <profile>`). There is no devcontainer: `just check` needs a host Rust toolchain (the podman gate cannot run real systemd, so it fails and was removed)
 
 ### Gotchas
 
@@ -99,4 +99,4 @@ User-level update scheduler on top of topgrade, no sudo. topgrade always runs wi
 - Production timers on this host are `topmatic@all-daily` and `topmatic@dev-daily` — never delete/disable without asking
 - Orphan cleanup only removes `topmatic@*` timers that carry topmatic's schedule drop-in (`topmatic@<p>.timer.d/10-schedule.conf`); anything else named `topmatic@*` is foreign (other tools) and must be left untouched, only reported
 - `topmatic sync`/TUI touch the real user systemd manager; dry-run first when verifying
-- Screenshots: `just screenshots` regenerates them from `docs/assets/*.tape` via the `topmatic-shots` distrobox (vhs + ffmpeg; vhs PNG `Output` is unreliable)
+- README screenshots (`docs/assets/*.png`) are regenerated manually, not via just: `vhs docs/assets/*.tape` in the `topmatic-shots` distrobox, then `ffmpeg -i target/tapes/<x>.gif -vf reverse -frames:v 1` for the last frame (vhs PNG `Output` is unreliable)

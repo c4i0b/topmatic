@@ -85,7 +85,7 @@ impl SystemdCtl for RealSystemdCtl {
 
     fn start_service(&self, profile: &str) -> io::Result<()> {
         let instance = format!("topmatic@{profile}.service");
-        run_status(self.record(self.systemctl(&["start", &instance])))
+        run_status(self.record(self.systemctl(&["start", "--no-block", &instance])))
     }
 
     fn stop_all(&self) -> io::Result<()> {
@@ -118,15 +118,22 @@ impl SystemdCtl for RealSystemdCtl {
 
     fn service_active(&self, profile: &str) -> bool {
         let unit = units::timer_instance(profile).replace(".timer", ".service");
-        run_output(self.systemctl(&["is-active", &unit]))
-            .map(|output| output.status.success())
+        run_output(self.systemctl(&["show", &unit, "-p", "ActiveState", "--value"]))
+            .map(|output| {
+                active_state_means_running(String::from_utf8_lossy(&output.stdout).trim())
+            })
             .unwrap_or(false)
     }
 
     fn service_since(&self, profile: &str) -> Option<DateTime<Utc>> {
         let unit = units::timer_instance(profile).replace(".timer", ".service");
-        let output =
-            run_output(self.systemctl(&["show", &unit, "-p", "ActiveEnterTimestamp", "--value"]))?;
+        let output = run_output(self.systemctl(&[
+            "show",
+            &unit,
+            "-p",
+            "ExecMainStartTimestamp",
+            "--value",
+        ]))?;
         parse_systemd_timestamp(String::from_utf8_lossy(&output.stdout).trim())
     }
 
@@ -234,6 +241,10 @@ fn wait_timeout(child: &mut Child, timeout: Duration) -> io::Result<Option<ExitS
     }
 }
 
+pub fn active_state_means_running(state: &str) -> bool {
+    matches!(state, "active" | "activating")
+}
+
 pub fn parse_systemd_timestamp(value: &str) -> Option<DateTime<Utc>> {
     let value = strip_weekday_prefix(value.trim());
     let (datetime, timezone) = value.rsplit_once(' ')?;
@@ -305,6 +316,18 @@ pub fn validate_on_calendar(calendar: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn activating_counts_as_running_for_oneshot_services() {
+        assert!(
+            active_state_means_running("activating"),
+            "a oneshot run spends its whole execution in activating (verified on host: is-active exits 3 the entire run)"
+        );
+        assert!(active_state_means_running("active"));
+        assert!(!active_state_means_running("inactive"));
+        assert!(!active_state_means_running("failed"));
+        assert!(!active_state_means_running(""));
+    }
 
     #[test]
     fn parses_next_elapse_timestamps() {

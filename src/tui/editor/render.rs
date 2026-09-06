@@ -135,7 +135,7 @@ impl EditorState {
     }
 }
 
-fn preset_label(preset: &SchedulePreset) -> String {
+pub(crate) fn preset_label(preset: &SchedulePreset) -> String {
     match preset {
         SchedulePreset::EveryNHours { hours } => format!("every {hours}h"),
         SchedulePreset::Daily { hour: 0, minute: 0 } => "daily".to_string(),

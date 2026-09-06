@@ -8,6 +8,7 @@ use crate::domain::schedule::{Schedule, SchedulePreset, Weekday, quick_choices};
 use crate::systemd::validate_on_calendar;
 
 use super::input::{FilterState, LineEdit};
+use super::overlay::{Overlay, OverlayAction};
 use popup::{RowEditor, RowEditorEvent, SelectTarget};
 
 pub mod popup;
@@ -61,6 +62,8 @@ pub struct EditorState {
     pub original_name: Option<String>,
     pub suggested_name: Option<String>,
     pub name_popup: Option<LineEdit>,
+    pub confirmed_name: Option<String>,
+    pub summary: Option<Overlay>,
     pub row_editor: Option<RowEditor>,
     pub steps_filter: FilterState,
     pub steps_scroll: usize,
@@ -97,6 +100,8 @@ impl EditorState {
                     original_name: Some(profile.name.clone()),
                     suggested_name: None,
                     name_popup: None,
+                    confirmed_name: None,
+                    summary: None,
                     row_editor: None,
                     steps_filter: FilterState::new(),
                     steps_scroll: 0,
@@ -116,6 +121,8 @@ impl EditorState {
                 original_name: None,
                 suggested_name: None,
                 name_popup: None,
+                confirmed_name: None,
+                summary: None,
                 row_editor: None,
                 steps_filter: FilterState::new(),
                 steps_scroll: 0,
@@ -161,10 +168,10 @@ impl EditorState {
     }
 
     pub fn final_name(&self) -> String {
-        self.name_popup
-            .as_ref()
-            .map(|edit| edit.value.trim().to_string())
-            .unwrap_or_default()
+        if let Some(edit) = &self.name_popup {
+            return edit.value.trim().to_string();
+        }
+        self.confirmed_name.clone().unwrap_or_default()
     }
 
     pub fn row_editor(&self) -> Option<&RowEditor> {
@@ -208,6 +215,13 @@ impl EditorState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> EditorEvent {
+        if let Some(mut summary) = self.summary.take() {
+            match summary.handle_key(key) {
+                Some(OverlayAction::Selected(0)) => return EditorEvent::RequestSave,
+                Some(OverlayAction::Selected(_)) | Some(OverlayAction::Cancelled) | None => {}
+            }
+            return EditorEvent::None;
+        }
         if self.name_popup.is_some() {
             return self.handle_popup_key(key);
         }
@@ -252,10 +266,11 @@ impl EditorState {
             }
             KeyCode::Enter => {
                 if sanitize_name(&self.final_name()).is_ok() {
-                    EditorEvent::RequestSave
-                } else {
-                    EditorEvent::None
+                    self.confirmed_name = Some(self.final_name());
+                    self.name_popup = None;
+                    self.summary = Some(self.build_summary());
                 }
+                EditorEvent::None
             }
             _ => {
                 if let Some(popup) = self.name_popup.as_mut() {
@@ -276,6 +291,39 @@ impl EditorState {
             RowEditorEvent::Changed => {}
         }
         EditorEvent::None
+    }
+
+    fn build_summary(&self) -> Overlay {
+        let preview = self
+            .selected_steps
+            .iter()
+            .take(4)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let extra = self.selected_steps.len().saturating_sub(4);
+        let steps = if extra > 0 {
+            format!("{} selected ({preview} …)", self.selected_steps.len())
+        } else {
+            format!("{} selected ({preview})", self.selected_steps.len())
+        };
+        Overlay::new(
+            "save profile",
+            vec![
+                format!("name    {}", self.final_name()),
+                format!("steps   {steps}"),
+                format!(
+                    "runs    {} at midnight",
+                    render::preset_label(&self.schedule.preset)
+                ),
+                format!("notify  {}", render::notify_label(self.notify)),
+            ]
+            .into_iter()
+            .map(ratatui::text::Line::from)
+            .collect(),
+            &["Confirm", "Cancel"],
+            0,
+        )
     }
 
     fn open_name_popup(&mut self) {
@@ -569,6 +617,86 @@ mod tests {
     }
 
     #[test]
+    fn save_flow_shows_summary_overlay_before_saving() {
+        let mut editor = editing_editor();
+        editor.section = Section::Save;
+        editor.handle_key(key(KeyCode::Enter));
+        assert!(editor.name_popup.is_some());
+        editor.handle_key(key(KeyCode::Enter));
+        let summary = editor.summary.as_ref().expect("summary overlay opens");
+        assert_eq!(
+            summary.options,
+            vec!["Confirm".to_string(), "Cancel".to_string()]
+        );
+        assert_eq!(summary.selected, 0, "cursor starts on Confirm");
+        assert!(summary.title.contains("save profile"));
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Enter)),
+            EditorEvent::RequestSave
+        );
+        assert!(editor.summary.is_none(), "confirm closes the overlay");
+    }
+
+    #[test]
+    fn summary_overlay_esc_and_cancel_stay_in_the_editor() {
+        let mut editor = editing_editor();
+        editor.section = Section::Save;
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Enter));
+        assert!(editor.summary.is_some());
+
+        assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::None);
+        assert!(editor.summary.is_none());
+        assert!(matches!(editor.section, Section::Save));
+
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Down));
+        editor.handle_key(key(KeyCode::Enter));
+        assert!(editor.summary.is_none(), "Cancel also just closes");
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Char('q'))),
+            EditorEvent::None
+        );
+    }
+
+    #[test]
+    fn summary_lists_what_will_be_saved() {
+        let mut editor = EditorState::from_preset(
+            catalog_entries(),
+            vec!["cargo".to_string(), "flatpak".to_string()],
+            "all-daily",
+            DEFAULT_RANDOM_DELAY_SEC,
+        );
+        editor.section = Section::Schedule;
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Down));
+        editor.handle_key(key(KeyCode::Down));
+        editor.handle_key(key(KeyCode::Down));
+        editor.handle_key(key(KeyCode::Enter));
+        editor.section = Section::Save;
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Enter));
+        let text: String = editor
+            .summary
+            .as_ref()
+            .unwrap()
+            .lines
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|span| span.content.clone())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("name    all-weekly"));
+        assert!(text.contains("steps   2 selected (cargo, flatpak)"));
+        assert!(text.contains("runs    weekly Mon at midnight"));
+        assert!(text.contains("notify  on failure"));
+    }
+
+    #[test]
     fn rejects_invalid_drafts() {
         let editor = new_editor();
         let error = editor.to_profile("bad name").unwrap_err();
@@ -640,6 +768,7 @@ mod tests {
         assert_eq!(editor.section, Section::Save);
         editor.handle_key(key(KeyCode::Enter));
         assert_eq!(editor.final_name(), "all-daily");
+        editor.handle_key(key(KeyCode::Enter));
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
             EditorEvent::RequestSave
@@ -932,6 +1061,8 @@ mod tests {
         editor.section = Section::Save;
         editor.handle_key(key(KeyCode::Enter));
         assert_eq!(editor.final_name(), "all-daily");
+        editor.handle_key(key(KeyCode::Enter));
+        assert!(editor.summary.is_some(), "name Enter opens the summary");
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
             EditorEvent::RequestSave

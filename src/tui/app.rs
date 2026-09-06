@@ -15,7 +15,10 @@ use super::dashboard;
 use super::editor;
 use super::input::{FilterState, LineEdit};
 use super::logs;
+use super::overlay::{Overlay, OverlayAction};
 use super::presets;
+
+const MESSAGE_TTL_TICKS: u64 = 25;
 
 pub struct App {
     pub config: AppConfig,
@@ -31,6 +34,9 @@ pub struct App {
     pub filter: FilterState,
     pub list_area: Cell<Rect>,
     pub message: String,
+    pub seen_message: String,
+    pub message_expires_at_tick: u64,
+    pub confirm: Option<(String, Overlay)>,
     pub should_quit: bool,
     pub tick: u64,
 }
@@ -75,6 +81,9 @@ impl App {
             filter: FilterState::new(),
             list_area: Cell::new(Rect::default()),
             message: String::new(),
+            seen_message: String::new(),
+            message_expires_at_tick: 0,
+            confirm: None,
             should_quit: false,
             tick: 0,
         };
@@ -160,6 +169,13 @@ impl App {
     }
 
     pub fn on_tick(&mut self) {
+        if self.message != self.seen_message {
+            self.seen_message = self.message.clone();
+            self.message_expires_at_tick = self.tick + MESSAGE_TTL_TICKS;
+        } else if !self.message.is_empty() && self.tick >= self.message_expires_at_tick {
+            self.message.clear();
+            self.seen_message.clear();
+        }
         self.tick = self.tick.wrapping_add(1);
         let follow_open = matches!(&self.view, View::Logs(state) if state.follow);
         let any_running = self.rows.iter().any(|row| row.running);
@@ -269,15 +285,19 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if let Some((profile, mut overlay)) = self.confirm.take() {
+            match overlay.handle_key(key) {
+                Some(OverlayAction::Selected(0)) => self.delete_profile(&profile),
+                Some(OverlayAction::Selected(_)) | Some(OverlayAction::Cancelled) => {}
+                None => self.confirm = Some((profile, overlay)),
+            }
+            return;
+        }
         let quits = matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'));
         let editing_dashboard_filter = matches!(self.view, View::Dashboard) && self.filter.active;
         if quits && !editing_dashboard_filter {
             match &self.view {
-                View::Dashboard
-                | View::Help
-                | View::Confirm { .. }
-                | View::Logs(_)
-                | View::PresetPicker { .. } => {
+                View::Dashboard | View::Help | View::Logs(_) | View::PresetPicker { .. } => {
                     self.should_quit = true;
                     return;
                 }
@@ -341,10 +361,6 @@ impl App {
                 }
             }
             View::Help => {}
-            View::Confirm { profile } => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => self.delete_profile(&profile),
-                _ => {}
-            },
         }
     }
 
@@ -380,7 +396,19 @@ impl App {
                 'e' => self.open_editor_for_selected(),
                 'd' => {
                     if let Some(name) = self.selected_row().map(|row| row.name.clone()) {
-                        self.view = View::Confirm { profile: name };
+                        let overlay = Overlay::new(
+                            "delete profile",
+                            vec![
+                                ratatui::text::Line::from(format!(
+                                    "Delete {} and its run history?",
+                                    name
+                                )),
+                                ratatui::text::Line::from("Timers and logs will be removed."),
+                            ],
+                            &["Delete", "Cancel"],
+                            1,
+                        );
+                        self.confirm = Some((name, overlay));
                     }
                 }
                 'r' => self.run_now(),
@@ -602,6 +630,7 @@ mod tests {
             app.handle_key(key(KeyCode::Char(character)));
         }
         app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Enter));
     }
 
     #[test]
@@ -631,7 +660,7 @@ mod tests {
     fn dump_views_at_screenshot_grid() {
         let (mut app, _harness) = harness(&[profile("all-daily"), profile("dev-tools")]);
         app.catalog = presets::fallback_catalog();
-        let views: [(&str, View); 6] = [
+        let views: [(&str, View); 5] = [
             ("dashboard", View::Dashboard),
             ("picker", View::PresetPicker { index: 0 }),
             (
@@ -644,12 +673,6 @@ mod tests {
                 ))),
             ),
             ("help", View::Help),
-            (
-                "confirm",
-                View::Confirm {
-                    profile: "all-daily".to_string(),
-                },
-            ),
             (
                 "logs",
                 View::Logs(super::logs::LogsState::open(&app.paths, "all-daily")),
@@ -748,13 +771,80 @@ mod tests {
     }
 
     #[test]
+    fn esc_closes_the_delete_overlay_without_deleting() {
+        let (mut app, _harness) = harness(&[profile("kept")]);
+        app.handle_key(key(KeyCode::Char('d')));
+        assert!(app.confirm.is_some());
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.confirm.is_none(), "esc always cancels overlays");
+        let saved = crate::config::load(&app.paths).unwrap();
+        assert_eq!(saved.profiles.len(), 1);
+    }
+
+    #[test]
+    fn delete_overlay_cursor_starts_on_cancel() {
+        let (mut app, _harness) = harness(&[profile("kept")]);
+        app.handle_key(key(KeyCode::Char('d')));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.confirm.is_none());
+        let saved = crate::config::load(&app.paths).unwrap();
+        assert_eq!(
+            saved.profiles.len(),
+            1,
+            "Enter on the default Cancel must not delete"
+        );
+    }
+
+    #[test]
+    fn q_is_swallowed_inside_the_delete_overlay() {
+        let (mut app, _harness) = harness(&[profile("kept")]);
+        app.handle_key(key(KeyCode::Char('d')));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(!app.should_quit, "q never quits from inside an overlay");
+        assert!(app.confirm.is_some());
+    }
+
+    #[test]
+    fn transient_messages_expire_after_the_ttl() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        assert!(!app.message.is_empty());
+        app.on_tick();
+        app.message_expires_at_tick = app.tick.saturating_sub(1);
+        app.on_tick();
+        assert!(app.message.is_empty(), "stale feedback fades away");
+        drop(harness);
+    }
+
+    #[test]
+    fn esc_back_out_of_every_view() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('n')));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.view, View::Dashboard), "picker backs out");
+
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.view, View::Dashboard), "editor cancels");
+
+        app.handle_key(key(KeyCode::Char('l')));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.view, View::Dashboard), "logs backs out");
+
+        app.handle_key(key(KeyCode::Char('?')));
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert!(matches!(app.view, View::Dashboard), "help closes");
+    }
+
+    #[test]
     fn confirmed_delete_removes_profile_and_state() {
         let (mut app, _harness) = harness(&[profile("gone")]);
         std::fs::create_dir_all(app.paths.logs_dir("gone")).unwrap();
 
         app.handle_key(key(KeyCode::Char('d')));
-        assert!(matches!(app.view, View::Confirm { .. }));
-        app.handle_key(key(KeyCode::Char('y')));
+        assert!(app.confirm.is_some(), "delete opens the overlay");
+        app.handle_key(key(KeyCode::Up));
+        app.handle_key(key(KeyCode::Enter));
 
         assert!(app.message.contains("deleted gone"));
         assert!(matches!(app.view, View::Dashboard));

@@ -29,7 +29,9 @@ pub(crate) fn draw(app: &App, frame: &mut Frame) {
         View::Editor(state) => draw_editor(state, frame, body),
         View::Logs(state) => logs::render(state, frame, body),
         View::Help => draw_help(frame, body),
-        View::Confirm { profile } => draw_confirm(profile, frame, body),
+    }
+    if let Some((_, overlay)) = &app.confirm {
+        overlay.render(frame, body);
     }
     draw_footer(app, frame, footer);
 }
@@ -116,7 +118,6 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
         View::Logs(state) if state.follow => "x stop  esc background  q quit",
         View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
         View::Help => "any key closes  q quit",
-        View::Confirm { .. } => "y confirm delete  esc cancels  q quit",
     }
 }
 
@@ -161,24 +162,6 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Paragraph::new(help_lines()).block(Block::bordered().title("help (? or any key closes)")),
         area,
     );
-}
-
-fn draw_confirm(profile: &str, frame: &mut Frame, area: Rect) {
-    let text = Paragraph::new(vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("Delete profile "),
-            Span::styled(profile.to_string(), Style::new().fg(Color::Red)),
-            Span::raw("?"),
-        ]),
-        Line::from("Run history (logs, status) will also be deleted."),
-        Line::from(""),
-        Line::from("y to confirm, anything else cancels"),
-    ])
-    .block(Block::bordered().title("confirm deletion"));
-    let popup = centered_rect(area, 50, 9);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(text, popup);
 }
 
 pub(crate) fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
@@ -274,15 +257,6 @@ mod tests {
         assert!(
             footer_hints(&View::Logs(crate::tui::logs::LogsState::follow("x")), false)
                 .contains("x stop")
-        );
-        assert!(
-            footer_hints(
-                &View::Confirm {
-                    profile: String::new()
-                },
-                false
-            )
-            .contains("y confirm")
         );
         assert!(footer_hints(&View::Dashboard, true).starts_with("filter"));
     }

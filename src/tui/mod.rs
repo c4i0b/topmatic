@@ -3,6 +3,7 @@ mod dashboard;
 mod editor;
 mod input;
 mod logs;
+mod overlay;
 mod presets;
 mod views;
 
@@ -23,7 +24,6 @@ pub enum View {
     Editor(Box<editor::EditorState>),
     Logs(logs::LogsState),
     Help,
-    Confirm { profile: String },
 }
 
 pub fn run() -> anyhow::Result<()> {

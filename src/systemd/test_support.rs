@@ -30,6 +30,21 @@ impl FakeCtl {
         }
     }
 
+    pub fn from_parts(
+        dir: PathBuf,
+        calls: Arc<Mutex<Vec<String>>>,
+        services: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
+    ) -> Self {
+        Self {
+            dir,
+            calls,
+            services,
+            existing_instances: Vec::new(),
+            linger: Some(false),
+            fail_enable_for: None,
+        }
+    }
+
     pub fn shared_calls(&self) -> Arc<Mutex<Vec<String>>> {
         Arc::clone(&self.calls)
     }

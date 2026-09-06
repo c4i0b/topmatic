@@ -19,6 +19,9 @@ impl NotifyBackend for NotifySend {
         let status = std::process::Command::new(&self.bin)
             .arg(summary)
             .arg(body)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()?;
         if status.success() {
             Ok(())

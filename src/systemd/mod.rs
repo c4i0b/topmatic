@@ -14,7 +14,7 @@ pub mod units;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub trait SystemdCtl {
+pub trait SystemdCtl: Send {
     fn unit_dir(&self) -> PathBuf;
     fn daemon_reload(&self) -> io::Result<()>;
     fn enable_timer(&self, profile: &str) -> io::Result<()>;
@@ -154,7 +154,11 @@ fn run_status(mut command: Command) -> io::Result<()> {
 }
 
 fn run_status_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<()> {
-    let mut child = command.spawn()?;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
     match wait_timeout(&mut child, timeout)? {
         Some(status) if status.success() => Ok(()),
         Some(status) => Err(io::Error::other(format!("command failed with {status}"))),
@@ -354,6 +358,18 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("timed out"), "got: {error}");
+    }
+
+    #[test]
+    fn run_status_silences_child_stdout_and_stderr() {
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("printf 'created symlink noise\\n'; echo noise >&2; exit 3");
+        let error = run_status_with_timeout(&mut command, Duration::from_secs(5))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("command failed"), "got: {error}");
     }
 
     #[test]

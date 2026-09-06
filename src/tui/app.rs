@@ -1,5 +1,7 @@
 use std::cell::Cell;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
@@ -21,13 +23,26 @@ use super::views;
 
 const MESSAGE_TTL_TICKS: u64 = 25;
 
+pub struct BackgroundJob {
+    pub label: String,
+    pub started: Instant,
+    pub shared: Arc<Mutex<Option<JobOutcome>>>,
+}
+
+pub enum JobOutcome {
+    Success(String),
+    Error(String),
+}
+
 pub struct App {
     pub config: AppConfig,
     pub paths: Paths,
     pub ctl: Box<dyn SystemdCtl>,
+    controller_factory: Box<dyn Fn() -> Box<dyn SystemdCtl>>,
     pub topmatic_bin: PathBuf,
     pub topgrade_bin: Option<PathBuf>,
     pub catalog: Vec<String>,
+    pub in_flight: Option<BackgroundJob>,
     pub view: View,
     pub selected: usize,
     pub list_scroll: u16,
@@ -54,12 +69,22 @@ impl App {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-        let ctl: Box<dyn SystemdCtl> = Box::new(RealSystemdCtl::new(home));
+        let ctl: Box<dyn SystemdCtl> = Box::new(RealSystemdCtl::new(home.clone()));
+        let controller_factory: Box<dyn Fn() -> Box<dyn SystemdCtl>> =
+            Box::new(move || Box::new(RealSystemdCtl::new(home.clone())));
         let topmatic_bin = std::env::current_exe()?;
         let path_env = std::env::var("PATH").unwrap_or_default();
         let topgrade_bin = resolve::find_in_path("topgrade", &path_env);
 
-        let mut app = Self::assemble(config, issues, paths, ctl, topmatic_bin, topgrade_bin);
+        let mut app = Self::assemble(
+            config,
+            issues,
+            paths,
+            ctl,
+            controller_factory,
+            topmatic_bin,
+            topgrade_bin,
+        );
         app.catalog = app.load_catalog();
         Ok(app)
     }
@@ -69,6 +94,7 @@ impl App {
         issues: Vec<String>,
         paths: Paths,
         ctl: Box<dyn SystemdCtl>,
+        controller_factory: Box<dyn Fn() -> Box<dyn SystemdCtl>>,
         topmatic_bin: PathBuf,
         topgrade_bin: Option<PathBuf>,
     ) -> Self {
@@ -76,9 +102,11 @@ impl App {
             config,
             paths,
             ctl,
+            controller_factory,
             topmatic_bin,
             topgrade_bin,
             catalog: Vec::new(),
+            in_flight: None,
             view: View::Dashboard,
             selected: 0,
             list_scroll: 0,
@@ -191,7 +219,53 @@ impl App {
         self.last_action = action.into();
     }
 
+    pub fn spawn_background(
+        &mut self,
+        label: impl Into<String>,
+        work: impl FnOnce() -> JobOutcome + Send + 'static,
+    ) {
+        let shared = Arc::new(Mutex::new(None));
+        let thread_shared = Arc::clone(&shared);
+        std::thread::spawn(move || *thread_shared.lock().unwrap() = Some(work()));
+        self.in_flight = Some(BackgroundJob {
+            label: label.into(),
+            started: Instant::now(),
+            shared,
+        });
+    }
+
+    fn spawn_sync_job(
+        &mut self,
+        label: String,
+        on_report: impl FnOnce(&crate::systemd::sync::SyncReport) -> JobOutcome + Send + 'static,
+    ) {
+        let ctl = (self.controller_factory)();
+        let config = self.config.clone();
+        let bin = self.topmatic_bin.clone();
+        self.spawn_background(label, move || {
+            let report = systemd_sync::sync(&config, &bin, ctl.as_ref());
+            on_report(&report)
+        });
+    }
+
+    pub fn poll_in_flight(&mut self) -> bool {
+        let Some(job) = self.in_flight.take() else {
+            return false;
+        };
+        let Some(outcome) = job.shared.lock().unwrap().take() else {
+            self.in_flight = Some(job);
+            return false;
+        };
+        match outcome {
+            JobOutcome::Success(action) => self.set_last_action(action),
+            JobOutcome::Error(message) => self.message = message,
+        }
+        self.rebuild_rows();
+        true
+    }
+
     pub fn on_tick(&mut self) {
+        self.poll_in_flight();
         if self.message != self.seen_message {
             self.seen_message = self.message.clone();
             self.message_expires_at_tick = self.tick + MESSAGE_TTL_TICKS;
@@ -540,13 +614,15 @@ impl App {
             self.view = View::Editor(Box::new(state));
             return;
         }
-        let report = systemd_sync::sync(&self.config, &self.topmatic_bin, self.ctl.as_ref());
-        if !report.errors.is_empty() {
-            self.message = format!("sync errors: {}", report.errors.join("; "));
-        } else {
-            self.set_last_action(format!("saved {}", profile.name));
-        }
-        self.rebuild_rows();
+        self.set_last_action(format!("saving {}…", profile.name));
+        let name = profile.name.clone();
+        self.spawn_sync_job(format!("saving {name}"), move |report| {
+            if report.errors.is_empty() {
+                JobOutcome::Success(format!("saved {name}"))
+            } else {
+                JobOutcome::Error(format!("sync errors: {}", report.errors.join("; ")))
+            }
+        });
     }
 
     fn delete_profile(&mut self, name: &str) {
@@ -555,13 +631,19 @@ impl App {
             self.message = format!("save failed: {error}");
         }
         let _ = crate::systemd::sync::purge_profile_state(&self.paths, name);
-        let _ = systemd_sync::sync(&self.config, &self.topmatic_bin, self.ctl.as_ref());
-        self.set_last_action(format!(
-            "deleted {name} — recreate with n if that was a mistake (run history purged)"
-        ));
+        self.set_last_action(format!("deleting {name}…"));
+        let name = name.to_string();
+        self.spawn_sync_job(format!("deleting {name}"), move |report| {
+            if report.errors.is_empty() {
+                JobOutcome::Success(format!(
+                    "deleted {name} — recreate with n if that was a mistake (run history purged)"
+                ))
+            } else {
+                JobOutcome::Error(format!("sync errors: {}", report.errors.join("; ")))
+            }
+        });
         self.view = View::Dashboard;
         self.selected = 0;
-        self.rebuild_rows();
     }
 
     fn run_now(&mut self) {
@@ -645,11 +727,24 @@ mod tests {
         let ctl = FakeCtl::new(unit_dir.clone());
         let calls = ctl.shared_calls();
         let services = ctl.shared_services();
+        let factory: Box<dyn Fn() -> Box<dyn SystemdCtl>> = {
+            let calls = Arc::clone(&calls);
+            let services = Arc::clone(&services);
+            let unit_dir = unit_dir.clone();
+            Box::new(move || {
+                Box::new(FakeCtl::from_parts(
+                    unit_dir.clone(),
+                    Arc::clone(&calls),
+                    Arc::clone(&services),
+                ))
+            })
+        };
         let mut app = App::assemble(
             crate::config::load_validated(&paths).unwrap().0,
             Vec::new(),
             paths,
             Box::new(ctl),
+            factory,
             PathBuf::from("/bin/topmatic"),
             Some(PathBuf::from("/nonexistent/topgrade")),
         );
@@ -678,6 +773,12 @@ mod tests {
         }
         app.handle_key(key(KeyCode::Enter));
         app.handle_key(key(KeyCode::Enter));
+    }
+
+    fn settle(app: &mut App) {
+        while !app.poll_in_flight() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     #[test]
@@ -795,6 +896,35 @@ mod tests {
     }
 
     #[test]
+    fn save_keeps_the_dashboard_responsive_while_syncing() {
+        let (mut app, harness) = harness(&[]);
+        app.handle_key(key(KeyCode::Char('n')));
+        app.handle_key(key(KeyCode::Enter));
+        save_editor_profile(&mut app, "all-daily", "all-daily");
+
+        assert!(
+            app.in_flight.is_some(),
+            "save defers the systemd sync behind a busy indicator"
+        );
+        assert!(
+            app.last_action.contains("saving all-daily"),
+            "the footer reports progress while the sync runs: {:?}",
+            app.last_action
+        );
+        settle(&mut app);
+        assert!(app.in_flight.is_none(), "the busy indicator clears");
+        assert!(app.last_action.contains("saved all-daily"));
+        assert!(
+            harness
+                .calls
+                .lock()
+                .unwrap()
+                .contains(&"enable:all-daily".to_string()),
+            "the background sync still converges systemd state"
+        );
+    }
+
+    #[test]
     fn new_profile_flow_picks_preset_saves_and_converges() {
         let (mut app, harness) = harness(&[]);
         app.handle_key(key(KeyCode::Char('n')));
@@ -802,6 +932,7 @@ mod tests {
         app.handle_key(key(KeyCode::Enter));
         assert!(matches!(app.view, View::Editor(_)));
         save_editor_profile(&mut app, "all-daily", "all-daily");
+        settle(&mut app);
 
         assert!(app.last_action.contains("saved all-daily"));
         assert!(matches!(app.view, View::Dashboard));
@@ -825,6 +956,7 @@ mod tests {
         app.handle_key(key(KeyCode::Enter));
         assert!(matches!(app.view, View::Editor(_)));
         save_editor_profile(&mut app, "all-daily", "all-daily");
+        settle(&mut app);
 
         let saved = crate::config::load(&app.paths).unwrap();
         assert_eq!(
@@ -849,6 +981,7 @@ mod tests {
         app.handle_key(key(KeyCode::Enter));
         assert!(matches!(app.view, View::Editor(_)));
         save_editor_profile(&mut app, "old", "new");
+        settle(&mut app);
 
         assert!(app.last_action.contains("saved new"));
         let saved = crate::config::load(&app.paths).unwrap();
@@ -997,6 +1130,7 @@ mod tests {
         assert!(app.confirm.is_some(), "delete opens the overlay");
         app.handle_key(key(KeyCode::Up));
         app.handle_key(key(KeyCode::Enter));
+        settle(&mut app);
 
         assert!(
             app.last_action.contains("deleted gone"),

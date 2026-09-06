@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -88,6 +90,8 @@ fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
     let hints = footer_hints(&app.view, app.filter.active);
     let prefix = if app.filter.active {
         Some((format!(" /{}", app.filter.text()), Color::Yellow))
+    } else if let Some(job) = &app.in_flight {
+        in_flight_prefix(job)
     } else {
         status_prefix(&app.message, &app.last_action)
     };
@@ -101,6 +105,20 @@ fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
         Style::new().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+const SPINNER_FRAMES: [char; 4] = ['◐', '◓', '◑', '◒'];
+
+pub(crate) fn spinner_frame(elapsed: Duration) -> char {
+    let index = (elapsed.as_millis() / 100) as usize % SPINNER_FRAMES.len();
+    SPINNER_FRAMES[index]
+}
+
+pub(crate) fn in_flight_prefix(job: &super::app::BackgroundJob) -> Option<(String, Color)> {
+    Some((
+        format!(" {} {}… ", spinner_frame(job.started.elapsed()), job.label),
+        Color::Yellow,
+    ))
 }
 
 pub(crate) fn status_prefix(message: &str, last_action: &str) -> Option<(String, Color)> {
@@ -456,5 +474,30 @@ mod tests {
                 .contains("x stop")
         );
         assert!(footer_hints(&View::Dashboard, true).starts_with("filter"));
+    }
+
+    #[test]
+    fn spinner_frames_rotate_with_elapsed_time() {
+        let zero = spinner_frame(Duration::ZERO);
+        let later = spinner_frame(Duration::from_secs(1));
+        assert_ne!(zero, later, "spinner must animate over time");
+        assert!(SPINNER_FRAMES.contains(&zero));
+        assert!(SPINNER_FRAMES.contains(&later));
+    }
+
+    #[test]
+    fn in_flight_prefix_shows_the_busy_spinner_and_label() {
+        let job = crate::tui::app::BackgroundJob {
+            label: "saving all-daily".to_string(),
+            started: std::time::Instant::now(),
+            shared: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        };
+        let (text, color) = in_flight_prefix(&job).unwrap();
+        assert!(text.contains("saving all-daily"), "got: {text:?}");
+        assert!(
+            SPINNER_FRAMES.contains(&text.trim().chars().next().unwrap()),
+            "footer leads with a spinner frame: {text:?}"
+        );
+        assert_eq!(color, Color::Yellow);
     }
 }

@@ -53,7 +53,6 @@ const SECTIONS: [Section; 4] = [
 enum ScheduleRow {
     Preset,
     Weekday,
-    Custom,
 }
 
 pub struct EditorState {
@@ -65,7 +64,6 @@ pub struct EditorState {
     pub row_editor: Option<RowEditor>,
     pub steps_filter: FilterState,
     pub steps_scroll: usize,
-    pub custom: LineEdit,
     pub catalog: Vec<String>,
     pub selected_steps: BTreeSet<String>,
     pub schedule: Schedule,
@@ -93,11 +91,6 @@ impl EditorState {
                 schedule.preset = schedule.preset.clone().normalized();
                 let mut original = profile.clone();
                 original.schedule = schedule.clone();
-                let custom = if let SchedulePreset::Custom { calendar } = &schedule.preset {
-                    calendar.clone()
-                } else {
-                    String::new()
-                };
                 Self {
                     creating: false,
                     original: Some(original),
@@ -107,7 +100,6 @@ impl EditorState {
                     row_editor: None,
                     steps_filter: FilterState::new(),
                     steps_scroll: 0,
-                    custom: LineEdit::new(custom),
                     catalog,
                     selected_steps: profile.steps.iter().cloned().collect(),
                     schedule,
@@ -127,7 +119,6 @@ impl EditorState {
                 row_editor: None,
                 steps_filter: FilterState::new(),
                 steps_scroll: 0,
-                custom: LineEdit::new(String::new()),
                 catalog,
                 selected_steps: BTreeSet::new(),
                 schedule: base_schedule,
@@ -182,10 +173,8 @@ impl EditorState {
 
     fn schedule_rows(&self) -> Vec<ScheduleRow> {
         let mut rows = vec![ScheduleRow::Preset];
-        match &self.schedule.preset {
-            SchedulePreset::Weekly { .. } => rows.push(ScheduleRow::Weekday),
-            SchedulePreset::Custom { .. } => rows.push(ScheduleRow::Custom),
-            _ => {}
+        if matches!(&self.schedule.preset, SchedulePreset::Weekly { .. }) {
+            rows.push(ScheduleRow::Weekday);
         }
         rows
     }
@@ -204,22 +193,7 @@ impl EditorState {
         if self.selected_steps.is_empty() {
             return Err("select at least one step".to_string());
         }
-        let preset = match &self.schedule.preset {
-            SchedulePreset::Custom { calendar } => {
-                let calendar = calendar.trim();
-                if self.custom.value.trim().is_empty() && calendar.is_empty() {
-                    return Err("custom OnCalendar expression is empty".to_string());
-                }
-                SchedulePreset::Custom {
-                    calendar: if self.custom.value.trim().is_empty() {
-                        calendar.to_string()
-                    } else {
-                        self.custom.value.trim().to_string()
-                    },
-                }
-            }
-            other => other.clone(),
-        };
+        let preset = self.schedule.preset.clone();
         let steps: Vec<String> = self.selected_steps.iter().cloned().collect();
         Ok(Profile {
             name,
@@ -326,13 +300,7 @@ impl EditorState {
     fn text_entry_focused(&self) -> bool {
         match self.section {
             Section::Steps => self.steps_filter.active,
-            Section::Schedule => {
-                matches!(
-                    self.schedule_rows().get(self.schedule_index),
-                    Some(ScheduleRow::Custom)
-                )
-            }
-            Section::Options | Section::Save => false,
+            Section::Schedule | Section::Options | Section::Save => false,
         }
     }
 
@@ -388,26 +356,6 @@ impl EditorState {
     }
 
     fn handle_schedule_key(&mut self, key: KeyEvent) -> EditorEvent {
-        if matches!(
-            self.schedule_rows().get(self.schedule_index),
-            Some(ScheduleRow::Custom)
-        ) {
-            match key.code {
-                KeyCode::Up => self.move_schedule_selection(-1),
-                KeyCode::Down => self.move_schedule_selection(1),
-                KeyCode::Enter => {}
-                _ => {
-                    self.custom.handle_key(key);
-                    let text = self.custom.value.trim();
-                    if !text.is_empty() {
-                        self.schedule.preset = SchedulePreset::Custom {
-                            calendar: text.to_string(),
-                        };
-                    }
-                }
-            }
-            return EditorEvent::None;
-        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k' | 'K') => self.move_schedule_selection(-1),
             KeyCode::Down | KeyCode::Char('j' | 'J') => self.move_schedule_selection(1),
@@ -442,18 +390,12 @@ impl EditorState {
                 {
                     ScheduleRow::Preset => {
                         let choices = quick_choices(self.jitter_secs);
-                        let mut options: Vec<String> =
+                        let options: Vec<String> =
                             choices.iter().map(|(label, _)| label.to_string()).collect();
-                        options.push("custom OnCalendar".to_string());
-                        let current =
-                            if matches!(self.schedule.preset, SchedulePreset::Custom { .. }) {
-                                choices.len()
-                            } else {
-                                choices
-                                    .iter()
-                                    .position(|(_, choice)| choice == &self.schedule)
-                                    .unwrap_or(0)
-                            };
+                        let current = choices
+                            .iter()
+                            .position(|(_, choice)| choice == &self.schedule)
+                            .unwrap_or(0);
                         RowEditor::select("frequency", options, current, SelectTarget::Preset)
                     }
                     ScheduleRow::Weekday => {
@@ -472,7 +414,6 @@ impl EditorState {
                             };
                         RowEditor::select("weekday", options, current, SelectTarget::Weekday)
                     }
-                    ScheduleRow::Custom => return,
                 }
             }
             Section::Options => {
@@ -500,30 +441,21 @@ impl EditorState {
         };
         match popup.target {
             SelectTarget::Preset => {
-                if popup.index < quick_choices(self.jitter_secs).len() {
-                    self.schedule = quick_choices(self.jitter_secs)[popup.index].1.clone();
+                if let Some((_, choice)) = quick_choices(self.jitter_secs).get(popup.index) {
+                    self.schedule = choice.clone();
                     if self.creating
                         && let Some(name) = self.suggested_name.clone()
                         && let Some(base) = frequency_base(&name)
                     {
                         let suffix = match &self.schedule.preset {
-                            SchedulePreset::Weekly { .. } => "-weekly",
-                            SchedulePreset::EveryNHours { .. } => "-6h",
-                            _ => "-daily",
+                            SchedulePreset::Weekly { .. } => "-weekly".to_string(),
+                            SchedulePreset::EveryNHours { hours } => format!("-{hours}h"),
+                            SchedulePreset::Biweekly => "-biweekly".to_string(),
+                            SchedulePreset::Monthly => "-monthly".to_string(),
+                            _ => "-daily".to_string(),
                         };
                         self.suggested_name = Some(format!("{base}{suffix}"));
                     }
-                } else {
-                    let calendar = if self.custom.value.trim().is_empty() {
-                        match &self.schedule.preset {
-                            SchedulePreset::Custom { calendar } => calendar.trim().to_string(),
-                            _ => String::new(),
-                        }
-                    } else {
-                        self.custom.value.trim().to_string()
-                    };
-                    self.custom = LineEdit::new(calendar.clone());
-                    self.schedule.preset = SchedulePreset::Custom { calendar };
                 }
             }
             SelectTarget::Weekday => {
@@ -538,7 +470,7 @@ impl EditorState {
 }
 
 fn frequency_base(name: &str) -> Option<String> {
-    ["-daily", "-weekly", "-6h"]
+    ["-daily", "-weekly", "-6h", "-12h", "-biweekly", "-monthly"]
         .iter()
         .find_map(|suffix| name.strip_suffix(suffix).map(str::to_string))
 }
@@ -602,21 +534,27 @@ mod tests {
         );
         editor.section = Section::Schedule;
 
-        editor.handle_key(key(KeyCode::Enter));
-        editor.handle_key(key(KeyCode::Down));
-        editor.handle_key(key(KeyCode::Enter));
+        let choose = |editor: &mut EditorState, downs: usize, ups: usize| {
+            editor.handle_key(key(KeyCode::Enter));
+            for _ in 0..downs {
+                editor.handle_key(key(KeyCode::Down));
+            }
+            for _ in 0..ups {
+                editor.handle_key(key(KeyCode::Up));
+            }
+            editor.handle_key(key(KeyCode::Enter));
+        };
+
+        choose(&mut editor, 3, 0);
         assert_eq!(editor.suggested_name.as_deref(), Some("all-weekly"));
-
-        editor.handle_key(key(KeyCode::Enter));
-        editor.handle_key(key(KeyCode::Down));
-        editor.handle_key(key(KeyCode::Enter));
-        assert_eq!(editor.suggested_name.as_deref(), Some("all-6h"));
-
-        editor.handle_key(key(KeyCode::Enter));
-        editor.handle_key(key(KeyCode::Up));
-        editor.handle_key(key(KeyCode::Up));
-        editor.handle_key(key(KeyCode::Enter));
+        choose(&mut editor, 1, 0);
+        assert_eq!(editor.suggested_name.as_deref(), Some("all-biweekly"));
+        choose(&mut editor, 1, 0);
+        assert_eq!(editor.suggested_name.as_deref(), Some("all-monthly"));
+        choose(&mut editor, 0, 5);
         assert_eq!(editor.suggested_name.as_deref(), Some("all-daily"));
+        choose(&mut editor, 2, 0);
+        assert_eq!(editor.suggested_name.as_deref(), Some("all-12h"));
 
         let mut editing = editing_editor();
         editing.section = Section::Schedule;
@@ -632,20 +570,23 @@ mod tests {
 
     #[test]
     fn rejects_invalid_drafts() {
-        let mut editor = new_editor();
+        let editor = new_editor();
         let error = editor.to_profile("bad name").unwrap_err();
         assert!(error.contains("profile name"));
 
         let error = editor.to_profile("flatpak-daily").unwrap_err();
         assert!(error.contains("at least one step"));
 
-        editor.selected_steps.insert("flatpak".to_string());
-        editor.schedule.preset = SchedulePreset::Custom {
-            calendar: String::new(),
+        let mut custom = new_editor();
+        custom.selected_steps.insert("flatpak".to_string());
+        custom.schedule.preset = SchedulePreset::Custom {
+            calendar: "definitely not a calendar".to_string(),
         };
-        editor.custom = LineEdit::new("  ");
-        let error = editor.to_profile("flatpak-daily").unwrap_err();
-        assert!(error.contains("OnCalendar"));
+        let draft = custom.to_profile("flatpak-daily").unwrap();
+        assert!(
+            validate_draft(&draft).is_err(),
+            "loaded custom calendars are still validated at save time"
+        );
     }
 
     #[test]
@@ -678,6 +619,8 @@ mod tests {
             editor.row_editor.is_some(),
             "Enter on preset row opens popup"
         );
+        editor.handle_key(key(KeyCode::Down));
+        editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Enter));
         assert!(matches!(
@@ -726,9 +669,11 @@ mod tests {
             popup.options,
             vec![
                 "daily".to_string(),
-                "weekly".to_string(),
                 "every 6 hours".to_string(),
-                "custom OnCalendar".to_string()
+                "every 12 hours".to_string(),
+                "weekly".to_string(),
+                "every 2 weeks".to_string(),
+                "monthly".to_string()
             ]
         );
     }
@@ -746,65 +691,14 @@ mod tests {
             editor.schedule_rows(),
             vec![ScheduleRow::Preset, ScheduleRow::Weekday]
         );
-        editor.schedule.preset = SchedulePreset::Custom {
-            calendar: "daily".to_string(),
-        };
-        assert_eq!(
-            editor.schedule_rows(),
-            vec![ScheduleRow::Preset, ScheduleRow::Custom]
-        );
-    }
-
-    #[test]
-    fn choosing_custom_preset_switches_and_seeds_the_row() {
-        let mut editor = new_editor();
-        editor.section = Section::Schedule;
-        editor.handle_key(key(KeyCode::Enter));
-        for _ in 0..3 {
-            editor.handle_key(key(KeyCode::Down));
-        }
-        editor.handle_key(key(KeyCode::Enter));
-        assert!(matches!(
-            editor.schedule.preset,
-            SchedulePreset::Custom { .. }
-        ));
-        assert!(editor.schedule_rows().contains(&ScheduleRow::Custom));
-    }
-
-    #[test]
-    fn custom_row_typing_updates_preset_and_enter_is_ignored() {
-        let mut editor = new_editor();
-        editor.schedule.preset = SchedulePreset::Custom {
-            calendar: String::new(),
-        };
-        editor.section = Section::Schedule;
-        editor.clamp_schedule_cursor();
-        editor.handle_key(key(KeyCode::Down));
-        assert!(matches!(
-            editor.schedule_rows().get(editor.schedule_index),
-            Some(ScheduleRow::Custom)
-        ));
-        editor.handle_key(key(KeyCode::Char('S')));
-        editor.handle_key(key(KeyCode::Char('u')));
-        editor.handle_key(key(KeyCode::Char('n')));
-        assert_eq!(editor.custom.value, "Sun");
-        assert_eq!(
-            editor.schedule.preset,
-            SchedulePreset::Custom {
-                calendar: "Sun".to_string()
-            }
-        );
-        editor.handle_key(key(KeyCode::Enter));
-        assert!(
-            editor.row_editor.is_none(),
-            "Enter on the custom row must not open popups"
-        );
+        editor.schedule.preset = SchedulePreset::Daily { hour: 0, minute: 0 };
+        assert_eq!(editor.schedule_rows(), vec![ScheduleRow::Preset]);
     }
 
     #[test]
     fn weekday_popup_applies_selection() {
         let mut editor = new_editor();
-        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[3].1.clone();
         editor.section = Section::Schedule;
         editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Enter));
@@ -831,7 +725,7 @@ mod tests {
     #[test]
     fn cursor_clamps_when_preset_shrinks_rows() {
         let mut editor = new_editor();
-        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[3].1.clone();
         editor.schedule_index = 1;
         assert_eq!(editor.schedule_rows().len(), 2);
         editor.schedule.preset = SchedulePreset::Daily { hour: 0, minute: 0 };
@@ -910,19 +804,6 @@ mod tests {
             editor.handle_key(key(KeyCode::Char('q'))),
             EditorEvent::Quit
         );
-
-        let mut custom = new_editor();
-        custom.schedule.preset = SchedulePreset::Custom {
-            calendar: String::new(),
-        };
-        custom.section = Section::Schedule;
-        custom.clamp_schedule_cursor();
-        custom.handle_key(key(KeyCode::Down));
-        assert_eq!(
-            custom.handle_key(key(KeyCode::Char('q'))),
-            EditorEvent::None
-        );
-        assert_eq!(custom.custom.value, "q");
 
         let mut filtered = new_editor();
         filtered.section = Section::Steps;

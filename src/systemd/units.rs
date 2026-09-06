@@ -84,13 +84,15 @@ pub fn timer_unit() -> String {
 }
 
 pub fn timer_drop_in(schedule: &Schedule) -> String {
-    format!(
-        "[Timer]\n\
-         OnCalendar={}\n\
-         RandomizedDelaySec={}\n",
-        schedule.preset.on_calendar(),
+    let mut body = String::from("[Timer]\n");
+    for spec in schedule.preset.on_calendar_specs() {
+        body.push_str(&format!("OnCalendar={spec}\n"));
+    }
+    body.push_str(&format!(
+        "RandomizedDelaySec={}\n",
         schedule.randomized_delay_sec
-    )
+    ));
+    body
 }
 
 pub fn parse_instance(unit_name: &str) -> Option<&str> {
@@ -159,6 +161,19 @@ mod tests {
         let unit = timer_unit();
         assert!(unit.contains("Persistent=true"));
         assert!(unit.contains("WantedBy=timers.target"));
+    }
+
+    #[test]
+    fn drop_in_writes_one_oncalendar_line_per_spec() {
+        let schedule = Schedule {
+            preset: SchedulePreset::Biweekly,
+            randomized_delay_sec: 300,
+        };
+        let drop_in = timer_drop_in(&schedule);
+        assert_eq!(
+            drop_in,
+            "[Timer]\nOnCalendar=Mon *-*-1..7 00:00:00\nOnCalendar=Mon *-*-15..21 00:00:00\nRandomizedDelaySec=300\n"
+        );
     }
 
     #[test]

@@ -116,7 +116,6 @@ impl EditorState {
                 };
                 format!("weekday: {weekday}")
             }
-            ScheduleRow::Custom => format!("custom OnCalendar: {}▏", self.custom.value),
         }
     }
 
@@ -151,6 +150,8 @@ fn preset_label(preset: &SchedulePreset) -> String {
             hour,
             minute,
         } => format!("weekly {} {hour:02}:{minute:02}", weekday.as_systemd()),
+        SchedulePreset::Biweekly => "every 2 weeks".to_string(),
+        SchedulePreset::Monthly => "monthly".to_string(),
         SchedulePreset::Custom { calendar } => format!("custom: {calendar}"),
         SchedulePreset::LegacySpread { .. } => "daily".to_string(),
     }
@@ -194,7 +195,7 @@ mod tests {
     #[test]
     fn body_lines_render_sections_rows_and_save_row_in_order() {
         let mut editor = editing_editor();
-        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[3].1.clone();
         let text: Vec<String> = editor.body_lines().iter().map(line_text).collect();
         let joined = text.join("\n");
 

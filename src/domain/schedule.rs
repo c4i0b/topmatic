@@ -50,6 +50,8 @@ pub enum SchedulePreset {
         hour: u32,
         minute: u32,
     },
+    Biweekly,
+    Monthly,
     Custom {
         calendar: String,
     },
@@ -60,7 +62,18 @@ pub enum SchedulePreset {
     },
 }
 
+pub const BIWEEKLY_SPECS: [&str; 2] = ["Mon *-*-1..7 00:00:00", "Mon *-*-15..21 00:00:00"];
+
 impl SchedulePreset {
+    pub fn on_calendar_specs(&self) -> Vec<String> {
+        match self {
+            SchedulePreset::Biweekly => {
+                BIWEEKLY_SPECS.iter().map(|spec| spec.to_string()).collect()
+            }
+            _ => vec![self.on_calendar()],
+        }
+    }
+
     pub fn on_calendar(&self) -> String {
         match self {
             SchedulePreset::EveryNHours { hours } => format!("*-*-* 00/{hours:02}:00:00"),
@@ -72,6 +85,8 @@ impl SchedulePreset {
                 hour,
                 minute,
             } => format!("{} *-*-* {hour:02}:{minute:02}:00", weekday.as_systemd()),
+            SchedulePreset::Biweekly => BIWEEKLY_SPECS.join(", "),
+            SchedulePreset::Monthly => "*-*-01 00:00:00".to_string(),
             SchedulePreset::Custom { calendar } => calendar.clone(),
             SchedulePreset::LegacySpread { period } => match period.as_deref() {
                 Some("weekly") => "weekly".to_string(),
@@ -127,6 +142,8 @@ impl Schedule {
                 hour,
                 minute,
             } => format!("weekly {} {hour:02}:{minute:02}", weekday.as_systemd()),
+            SchedulePreset::Biweekly => "every 2 weeks".to_string(),
+            SchedulePreset::Monthly => "monthly".to_string(),
             SchedulePreset::Custom { calendar } => format!("custom: {calendar}"),
             SchedulePreset::LegacySpread { .. } => "daily".to_string(),
         }
@@ -143,6 +160,20 @@ pub fn quick_choices(jitter_secs: u64) -> Vec<(&'static str, Schedule)> {
             },
         ),
         (
+            "every 6 hours",
+            Schedule {
+                preset: SchedulePreset::EveryNHours { hours: 6 },
+                randomized_delay_sec: jitter_secs,
+            },
+        ),
+        (
+            "every 12 hours",
+            Schedule {
+                preset: SchedulePreset::EveryNHours { hours: 12 },
+                randomized_delay_sec: jitter_secs,
+            },
+        ),
+        (
             "weekly",
             Schedule {
                 preset: SchedulePreset::Weekly {
@@ -154,9 +185,16 @@ pub fn quick_choices(jitter_secs: u64) -> Vec<(&'static str, Schedule)> {
             },
         ),
         (
-            "every 6 hours",
+            "every 2 weeks",
             Schedule {
-                preset: SchedulePreset::EveryNHours { hours: 6 },
+                preset: SchedulePreset::Biweekly,
+                randomized_delay_sec: jitter_secs,
+            },
+        ),
+        (
+            "monthly",
+            Schedule {
+                preset: SchedulePreset::Monthly,
                 randomized_delay_sec: jitter_secs,
             },
         ),
@@ -172,6 +210,42 @@ pub fn matches_quick_choice(schedule: &Schedule) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn biweekly_and_monthly_generate_verified_calendar_specs() {
+        let biweekly = SchedulePreset::Biweekly;
+        assert_eq!(
+            biweekly.on_calendar_specs(),
+            vec![
+                "Mon *-*-1..7 00:00:00".to_string(),
+                "Mon *-*-15..21 00:00:00".to_string(),
+            ]
+        );
+        assert_eq!(
+            biweekly.on_calendar(),
+            "Mon *-*-1..7 00:00:00, Mon *-*-15..21 00:00:00"
+        );
+        assert_eq!(SchedulePreset::Monthly.on_calendar(), "*-*-01 00:00:00");
+        assert_eq!(SchedulePreset::Monthly.on_calendar_specs().len(), 1);
+        assert_eq!(
+            SchedulePreset::Biweekly.normalized(),
+            SchedulePreset::Biweekly
+        );
+    }
+
+    #[test]
+    fn new_presets_round_trip_through_toml() {
+        for text in [
+            "preset = \"biweekly\"\nrandomized_delay_sec = 300",
+            "preset = \"monthly\"\nrandomized_delay_sec = 300",
+        ] {
+            let schedule: Schedule = toml::from_str(text).unwrap();
+            assert_eq!(
+                schedule.clone(),
+                toml::from_str(&toml::to_string(&schedule).unwrap()).unwrap()
+            );
+        }
+    }
 
     #[test]
     fn generates_on_calendar_for_each_preset() {
@@ -296,7 +370,10 @@ mod tests {
                         "{choice:?} must anchor at midnight"
                     );
                 }
-                SchedulePreset::EveryNHours { hours } => assert_eq!(*hours, 6),
+                SchedulePreset::EveryNHours { hours } => {
+                    assert!(*hours == 6 || *hours == 12, "{choice:?}");
+                }
+                SchedulePreset::Biweekly | SchedulePreset::Monthly => {}
                 other => panic!("unexpected quick choice {other:?}"),
             }
         }

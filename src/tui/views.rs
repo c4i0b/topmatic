@@ -260,7 +260,7 @@ mod tests {
                 &View::Editor(Box::new(EditorState::new(
                     None,
                     Vec::new(),
-                    crate::domain::schedule::DEFAULT_DELAY_SEC
+                    crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC
                 )),),
                 false
             )

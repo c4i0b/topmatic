@@ -214,7 +214,7 @@ impl App {
                     }
                     KeyCode::Esc => self.view = View::Dashboard,
                     KeyCode::Enter => {
-                        let jitter = self.config.defaults.resolved().default_jitter.as_secs();
+                        let jitter = self.config.defaults.resolved().random_delay.as_secs();
                         let editor = if index < presets::PRESETS.len() {
                             let preset = &presets::PRESETS[index];
                             let steps = presets::steps_for(index, &self.catalog);
@@ -333,7 +333,7 @@ impl App {
             .selected_row()
             .and_then(|row| self.config.profile(&row.name).cloned());
         if let Some(profile) = profile {
-            let jitter = self.config.defaults.resolved().default_jitter.as_secs();
+            let jitter = self.config.defaults.resolved().random_delay.as_secs();
             self.view = View::Editor(Box::new(editor::EditorState::new(
                 Some(&profile),
                 self.catalog.clone(),

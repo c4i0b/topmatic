@@ -49,13 +49,13 @@ pub struct Defaults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retries: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retry_base_delay: Option<TomlDuration>,
+    pub retry_delay: Option<TomlDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retry_budget: Option<TomlDuration>,
+    pub give_up_after: Option<TomlDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_wait: Option<TomlDuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_jitter: Option<TomlDuration>,
+    pub random_delay: Option<TomlDuration>,
 }
 
 impl Defaults {
@@ -70,22 +70,22 @@ impl Defaults {
         }
         ResolvedDefaults {
             retries: self.retries.unwrap_or(hardcoded.retries),
-            retry_base_delay: self
-                .retry_base_delay
+            retry_delay: self
+                .retry_delay
                 .map(|d| d.0)
-                .unwrap_or(hardcoded.retry_base_delay),
-            retry_budget: self
-                .retry_budget
+                .unwrap_or(hardcoded.retry_delay),
+            give_up_after: self
+                .give_up_after
                 .map(|d| d.0)
-                .unwrap_or(hardcoded.retry_budget),
+                .unwrap_or(hardcoded.give_up_after),
             network_wait: self
                 .network_wait
                 .map(|d| d.0)
                 .unwrap_or(hardcoded.network_wait),
-            default_jitter: self
-                .default_jitter
+            random_delay: self
+                .random_delay
                 .map(|d| d.0)
-                .unwrap_or(hardcoded.default_jitter),
+                .unwrap_or(hardcoded.random_delay),
         }
     }
 }
@@ -93,20 +93,20 @@ impl Defaults {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedDefaults {
     pub retries: u32,
-    pub retry_base_delay: Duration,
-    pub retry_budget: Duration,
+    pub retry_delay: Duration,
+    pub give_up_after: Duration,
     pub network_wait: Duration,
-    pub default_jitter: Duration,
+    pub random_delay: Duration,
 }
 
 impl ResolvedDefaults {
     pub fn hardcoded() -> Self {
         Self {
             retries: 3,
-            retry_base_delay: Duration::from_secs(2 * 60),
-            retry_budget: Duration::from_secs(45 * 60),
+            retry_delay: Duration::from_secs(2 * 60),
+            give_up_after: Duration::from_secs(45 * 60),
             network_wait: Duration::from_secs(10 * 60),
-            default_jitter: Duration::from_secs(5 * 60),
+            random_delay: Duration::from_secs(5 * 60),
         }
     }
 }
@@ -115,9 +115,9 @@ impl From<&ResolvedDefaults> for RetryPolicy {
     fn from(defaults: &ResolvedDefaults) -> Self {
         Self {
             max_retries: defaults.retries,
-            base_delay: defaults.retry_base_delay,
+            base_delay: defaults.retry_delay,
             delay_factor: 3,
-            budget: defaults.retry_budget,
+            budget: defaults.give_up_after,
             network_cap: defaults.network_wait,
             poll: Duration::from_secs(10),
         }
@@ -138,14 +138,14 @@ pub fn validate_defaults(defaults: &Defaults) -> Vec<String> {
             errors.push(format!("{name} must be greater than zero"));
         }
     };
-    positive(defaults.retry_base_delay, "retry_base_delay");
-    positive(defaults.retry_budget, "retry_budget");
+    positive(defaults.retry_delay, "retry_delay");
+    positive(defaults.give_up_after, "give_up_after");
     positive(defaults.network_wait, "network_wait");
-    positive(defaults.default_jitter, "default_jitter");
-    if let (Some(base), Some(budget)) = (defaults.retry_base_delay, defaults.retry_budget)
-        && budget.0 < base.0
+    positive(defaults.random_delay, "random_delay");
+    if let (Some(delay), Some(limit)) = (defaults.retry_delay, defaults.give_up_after)
+        && limit.0 < delay.0
     {
-        errors.push("retry_budget is shorter than retry_base_delay".to_string());
+        errors.push("give_up_after is shorter than retry_delay".to_string());
     }
     errors
 }
@@ -160,14 +160,24 @@ pub fn render_example() -> String {
         "[defaults]".to_string(),
         format!("# retries = {}", defaults.retries),
         format!(
-            "# retry_base_delay = \"{}\"",
-            duration(defaults.retry_base_delay)
+            "# retry_delay = \"{}\"{}",
+            duration(defaults.retry_delay),
+            "   # wait before the first retry; grows 3x each time"
         ),
-        format!("# retry_budget = \"{}\"", duration(defaults.retry_budget)),
-        format!("# network_wait = \"{}\"", duration(defaults.network_wait)),
         format!(
-            "# default_jitter = \"{}\"",
-            duration(defaults.default_jitter)
+            "# give_up_after = \"{}\"{}",
+            duration(defaults.give_up_after),
+            " # stop insisting after this much total time"
+        ),
+        format!(
+            "# network_wait = \"{}\"{}",
+            duration(defaults.network_wait),
+            "  # wait for the network before starting"
+        ),
+        format!(
+            "# random_delay = \"{}\"{}",
+            duration(defaults.random_delay),
+            "   # run within this much of the schedule time, never exactly on it"
         ),
     ]
     .join("\n")
@@ -279,7 +289,7 @@ pub fn load_validated(paths: &Paths) -> anyhow::Result<(AppConfig, Vec<String>)>
             )),
         }
     }
-    let default_jitter = config.defaults.resolved().default_jitter.as_secs();
+    let random_delay = config.defaults.resolved().random_delay.as_secs();
     let Some(profiles) = value.get("profiles").and_then(|v| v.as_array()) else {
         return Ok((config, issues));
     };
@@ -292,7 +302,7 @@ pub fn load_validated(paths: &Paths) -> anyhow::Result<(AppConfig, Vec<String>)>
             Ok(mut profile) => {
                 profile.schedule.preset = profile.schedule.preset.clone().normalized();
                 if !has_jitter {
-                    profile.schedule.randomized_delay_sec = default_jitter;
+                    profile.schedule.randomized_delay_sec = random_delay;
                 }
                 if config.profile(&profile.name).is_some() {
                     issues.push(format!(
@@ -417,11 +427,11 @@ mod tests {
     #[test]
     fn durations_parse_human_units_and_round_trip() {
         let defaults: Defaults =
-            toml::from_str("retries = 2\nretry_base_delay = \"90s\"\nnetwork_wait = \"2min 30s\"")
+            toml::from_str("retries = 2\nretry_delay = \"90s\"\nnetwork_wait = \"2min 30s\"")
                 .unwrap();
         assert_eq!(defaults.retries, Some(2));
         assert_eq!(
-            defaults.retry_base_delay.map(|d| d.0),
+            defaults.retry_delay.map(|d| d.0),
             Some(Duration::from_secs(90))
         );
         assert_eq!(
@@ -440,7 +450,7 @@ mod tests {
         std::fs::create_dir_all(&paths.config_dir).unwrap();
         std::fs::write(
             paths.config_file(),
-            "[defaults]\nretry_base_delay = \"two weeks \"\n[[profiles]]\nname = \"ok\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\n",
+            "[defaults]\nretry_delay = \"two weeks \"\n[[profiles]]\nname = \"ok\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\n",
         )
         .unwrap();
 
@@ -462,20 +472,20 @@ mod tests {
             ResolvedDefaults::hardcoded()
         );
 
-        let defaults: Defaults = toml::from_str("retries = 1\nretry_budget = \"9min\"").unwrap();
+        let defaults: Defaults = toml::from_str("retries = 1\ngive_up_after = \"9min\"").unwrap();
         let resolved = defaults.resolved();
         assert_eq!(resolved.retries, 1);
-        assert_eq!(resolved.retry_budget, Duration::from_secs(9 * 60));
+        assert_eq!(resolved.give_up_after, Duration::from_secs(9 * 60));
         assert_eq!(
-            resolved.retry_base_delay,
-            ResolvedDefaults::hardcoded().retry_base_delay
+            resolved.retry_delay,
+            ResolvedDefaults::hardcoded().retry_delay
         );
     }
 
     #[test]
     fn invalid_combinations_reject_the_whole_table() {
         let defaults: Defaults =
-            toml::from_str("retries = 2\nretry_base_delay = \"10min\"\nretry_budget = \"5min\"")
+            toml::from_str("retries = 2\nretry_delay = \"10min\"\ngive_up_after = \"5min\"")
                 .unwrap();
         assert!(!validate_defaults(&defaults).is_empty());
         assert_eq!(defaults.resolved(), ResolvedDefaults::hardcoded());
@@ -518,7 +528,11 @@ mod tests {
             .unwrap();
         assert_eq!(first, second, "idempotent regeneration keeps mtime");
         assert!(render_example().contains("# retries = 3"));
-        assert!(render_example().contains("default_jitter"));
+        assert!(render_example().contains("random_delay"));
+        assert!(
+            render_example().contains("grows 3x"),
+            "the increment must be visible"
+        );
     }
 
     #[test]
@@ -536,7 +550,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
         let mut config = AppConfig {
-            defaults: toml::from_str("retries = 2\ndefault_jitter = \"3min\"").unwrap(),
+            defaults: toml::from_str("retries = 2\nrandom_delay = \"3min\"").unwrap(),
             profiles: Vec::new(),
         };
         config.upsert(sample_profile("alpha"));
@@ -561,7 +575,7 @@ mod tests {
         std::fs::create_dir_all(&paths.config_dir).unwrap();
         std::fs::write(
             paths.config_file(),
-            "[defaults]\ndefault_jitter = \"9min\"\n\n[[profiles]]\nname = \"bare\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\n\n[[profiles]]\nname = \"explicit\"\nsteps = [\"cargo\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\nrandomized_delay_sec = 120\n",
+            "[defaults]\nrandom_delay = \"9min\"\n\n[[profiles]]\nname = \"bare\"\nsteps = [\"flatpak\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\n\n[[profiles]]\nname = \"explicit\"\nsteps = [\"cargo\"]\n[profiles.schedule]\npreset = \"daily\"\nhour = 0\nminute = 0\nrandomized_delay_sec = 120\n",
         )
         .unwrap();
 

@@ -172,7 +172,7 @@ pub(crate) fn notify_label(policy: NotifyPolicy) -> &'static str {
 mod tests {
     use super::*;
     use crate::domain::profile::{NotifyPolicy, Profile, Scope};
-    use crate::domain::schedule::DEFAULT_DELAY_SEC;
+    use crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC;
     use crate::domain::schedule::Schedule;
     use crate::domain::schedule::quick_choices;
 
@@ -187,7 +187,7 @@ mod tests {
         EditorState::new(
             Some(&profile),
             vec!["flatpak".to_string()],
-            crate::domain::schedule::DEFAULT_DELAY_SEC,
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
         )
     }
 
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn body_lines_render_sections_rows_and_save_row_in_order() {
         let mut editor = editing_editor();
-        editor.schedule = quick_choices(DEFAULT_DELAY_SEC)[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[1].1.clone();
         let text: Vec<String> = editor.body_lines().iter().map(line_text).collect();
         let joined = text.join("\n");
 
@@ -232,7 +232,7 @@ mod tests {
             catalog.clone(),
             catalog,
             "all-daily",
-            crate::domain::schedule::DEFAULT_DELAY_SEC,
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
         );
 
         let text: String = editor
@@ -253,7 +253,7 @@ mod tests {
             catalog.clone(),
             catalog,
             "all-daily",
-            crate::domain::schedule::DEFAULT_DELAY_SEC,
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
         );
         let golden = editor
             .steps_header()

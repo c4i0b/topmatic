@@ -88,7 +88,7 @@ impl SchedulePreset {
     }
 }
 
-pub const DEFAULT_DELAY_SEC: u64 = 300;
+pub const DEFAULT_RANDOM_DELAY_SEC: u64 = 300;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Schedule {
@@ -99,14 +99,14 @@ pub struct Schedule {
 }
 
 fn default_randomized_delay_sec() -> u64 {
-    DEFAULT_DELAY_SEC
+    DEFAULT_RANDOM_DELAY_SEC
 }
 
 impl Default for Schedule {
     fn default() -> Self {
         Self {
             preset: SchedulePreset::Daily { hour: 0, minute: 0 },
-            randomized_delay_sec: DEFAULT_DELAY_SEC,
+            randomized_delay_sec: DEFAULT_RANDOM_DELAY_SEC,
         }
     }
 }
@@ -164,7 +164,7 @@ pub fn quick_choices(jitter_secs: u64) -> Vec<(&'static str, Schedule)> {
 }
 
 pub fn matches_quick_choice(schedule: &Schedule) -> Option<usize> {
-    quick_choices(DEFAULT_DELAY_SEC)
+    quick_choices(DEFAULT_RANDOM_DELAY_SEC)
         .iter()
         .position(|(_, choice)| choice == schedule)
 }
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn quick_choices_match_their_own_schedules() {
-        for (index, (_, choice)) in quick_choices(DEFAULT_DELAY_SEC).iter().enumerate() {
+        for (index, (_, choice)) in quick_choices(DEFAULT_RANDOM_DELAY_SEC).iter().enumerate() {
             assert_eq!(matches_quick_choice(choice), Some(index));
         }
         assert_eq!(matches_quick_choice(&Schedule::default()), Some(0));
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn quick_choices_anchor_calendar_presets_at_midnight() {
-        for (_, choice) in quick_choices(DEFAULT_DELAY_SEC) {
+        for (_, choice) in quick_choices(DEFAULT_RANDOM_DELAY_SEC) {
             match &choice.preset {
                 SchedulePreset::Daily { hour, minute }
                 | SchedulePreset::Weekly { hour, minute, .. } => {
@@ -320,6 +320,6 @@ mod tests {
     #[test]
     fn missing_randomized_delay_falls_back_to_default() {
         let schedule: Schedule = toml::from_str("preset = 'daily'\nhour = 5\nminute = 0").unwrap();
-        assert_eq!(schedule.randomized_delay_sec, DEFAULT_DELAY_SEC);
+        assert_eq!(schedule.randomized_delay_sec, DEFAULT_RANDOM_DELAY_SEC);
     }
 }

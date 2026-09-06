@@ -58,12 +58,12 @@ pub fn run() -> anyhow::Result<()> {
     }
     let resolved = config.defaults.resolved();
     println!(
-        "ok:   run policy: {} retries, {} base delay, {} budget, {} network wait, {} default jitter",
+        "ok:   run policy: {} retries, first after {} then growing, gives up after {}, waits {} for network, runs within {} of schedule",
         resolved.retries,
-        humantime::format_duration(resolved.retry_base_delay),
-        humantime::format_duration(resolved.retry_budget),
+        humantime::format_duration(resolved.retry_delay),
+        humantime::format_duration(resolved.give_up_after),
         humantime::format_duration(resolved.network_wait),
-        humantime::format_duration(resolved.default_jitter),
+        humantime::format_duration(resolved.random_delay),
     );
     println!(
         "ok:   config at {} ({} valid profile(s))",

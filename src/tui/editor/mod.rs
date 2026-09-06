@@ -546,7 +546,7 @@ pub fn validate_draft(profile: &Profile) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::schedule::DEFAULT_DELAY_SEC;
+    use crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC;
     use crate::domain::schedule::matches_quick_choice;
     use crate::domain::steps::catalog;
 
@@ -557,7 +557,7 @@ mod tests {
     }
 
     fn new_editor() -> EditorState {
-        EditorState::new(None, catalog_entries(), DEFAULT_DELAY_SEC)
+        EditorState::new(None, catalog_entries(), DEFAULT_RANDOM_DELAY_SEC)
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -572,7 +572,7 @@ mod tests {
             notify: NotifyPolicy::OnFailure,
             scope: Scope::User,
         };
-        EditorState::new(Some(&profile), catalog_entries(), DEFAULT_DELAY_SEC)
+        EditorState::new(Some(&profile), catalog_entries(), DEFAULT_RANDOM_DELAY_SEC)
     }
 
     #[test]
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn weekday_popup_applies_selection() {
         let mut editor = new_editor();
-        editor.schedule = quick_choices(DEFAULT_DELAY_SEC)[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[1].1.clone();
         editor.section = Section::Schedule;
         editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Enter));
@@ -776,7 +776,7 @@ mod tests {
     #[test]
     fn cursor_clamps_when_preset_shrinks_rows() {
         let mut editor = new_editor();
-        editor.schedule = quick_choices(DEFAULT_DELAY_SEC)[1].1.clone();
+        editor.schedule = quick_choices(DEFAULT_RANDOM_DELAY_SEC)[1].1.clone();
         editor.schedule_index = 1;
         assert_eq!(editor.schedule_rows().len(), 2);
         editor.schedule.preset = SchedulePreset::Daily { hour: 0, minute: 0 };
@@ -1008,7 +1008,7 @@ mod tests {
             catalog_entries(),
             vec!["flatpak".to_string()],
             "flatpak-daily",
-            DEFAULT_DELAY_SEC,
+            DEFAULT_RANDOM_DELAY_SEC,
         );
         assert!(editor.creating);
         assert!(editor.selected_steps.contains("flatpak"));

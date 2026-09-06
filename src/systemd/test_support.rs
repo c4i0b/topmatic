@@ -12,6 +12,7 @@ pub struct FakeCtl {
     dir: PathBuf,
     calls: Arc<Mutex<Vec<String>>>,
     pub services: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
+    since: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
     pub existing_instances: Vec<String>,
     pub linger: Option<bool>,
     pub fail_enable_for: Option<String>,
@@ -24,6 +25,7 @@ impl FakeCtl {
             dir,
             calls: Arc::new(Mutex::new(Vec::new())),
             services: Arc::new(Mutex::new(HashMap::new())),
+            since: Arc::new(Mutex::new(HashMap::new())),
             existing_instances: Vec::new(),
             linger: Some(false),
             fail_enable_for: None,
@@ -34,11 +36,13 @@ impl FakeCtl {
         dir: PathBuf,
         calls: Arc<Mutex<Vec<String>>>,
         services: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
+        since: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
     ) -> Self {
         Self {
             dir,
             calls,
             services,
+            since,
             existing_instances: Vec::new(),
             linger: Some(false),
             fail_enable_for: None,
@@ -51,6 +55,10 @@ impl FakeCtl {
 
     pub fn shared_services(&self) -> Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>> {
         Arc::clone(&self.services)
+    }
+
+    pub fn shared_since(&self) -> Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>> {
+        Arc::clone(&self.since)
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -88,10 +96,12 @@ impl SystemdCtl for FakeCtl {
 
     fn start_service(&self, profile: &str) -> io::Result<()> {
         self.record(format!("start:{profile}"));
+        let now = chrono::Utc::now();
         self.services
             .lock()
             .unwrap()
-            .insert(profile.to_string(), chrono::Utc::now());
+            .insert(profile.to_string(), now);
+        self.since.lock().unwrap().insert(profile.to_string(), now);
         Ok(())
     }
 
@@ -100,7 +110,7 @@ impl SystemdCtl for FakeCtl {
     }
 
     fn service_since(&self, profile: &str) -> Option<DateTime<Utc>> {
-        self.services.lock().unwrap().get(profile).copied()
+        self.since.lock().unwrap().get(profile).copied()
     }
 
     fn stop_service(&self, profile: &str) -> io::Result<()> {

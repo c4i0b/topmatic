@@ -373,18 +373,28 @@ impl App {
             let profile = state.profile.clone();
             let row = self.rows.iter().find(|row| row.name == profile);
             let running = row.is_some_and(|row| row.running);
+            let since = row.and_then(|row| row.running_since);
             let status = match row.as_ref().map(|row| row.status.clone()) {
                 Some(status) => status,
                 None => read_status(&self.paths, &profile).ok().flatten(),
             };
-            let elapsed = row
-                .and_then(|row| row.running_since)
+            let stale = since.is_some_and(|start| {
+                status
+                    .as_ref()
+                    .is_some_and(|outcome| outcome.finished_at <= start)
+            });
+            let elapsed = since
                 .map(|since| dashboard::format_elapsed(chrono::Utc::now() - since))
                 .unwrap_or_default();
             state.follow_header = if running {
                 format!("running {profile} · {elapsed}")
+            } else if stale {
+                format!("{profile} not running")
             } else {
                 match status.as_ref() {
+                    Some(outcome) if outcome.skipped => {
+                        format!("{profile} skipped — a run was already active")
+                    }
                     Some(outcome) if outcome.success => format!("{profile} finished ok"),
                     Some(outcome) => format!(
                         "{profile} FAILED (exit {:?})",
@@ -735,9 +745,15 @@ impl App {
     }
 
     fn run_now(&mut self) {
-        let Some(name) = self.selected_row().map(|row| row.name.clone()) else {
+        let Some(row) = self.selected_row() else {
             return;
         };
+        let name = row.name.clone();
+        if row.running {
+            self.log(ActivityKind::Action, format!("{name} already running"));
+            self.view = View::Logs(logs::LogsState::follow(&name));
+            return;
+        }
         self.log(ActivityKind::Action, format!("starting {name}"));
         let ctl = (self.controller_factory)();
         let name_for_job = name.clone();
@@ -856,15 +872,18 @@ mod tests {
         let ctl = FakeCtl::new(unit_dir.clone());
         let calls = ctl.shared_calls();
         let services = ctl.shared_services();
+        let since = ctl.shared_since();
         let factory: Box<dyn Fn() -> Box<dyn SystemdCtl>> = {
             let calls = Arc::clone(&calls);
             let services = Arc::clone(&services);
+            let since = Arc::clone(&since);
             let unit_dir = unit_dir.clone();
             Box::new(move || {
                 Box::new(FakeCtl::from_parts(
                     unit_dir.clone(),
                     Arc::clone(&calls),
                     Arc::clone(&services),
+                    Arc::clone(&since),
                 ))
             })
         };
@@ -1374,11 +1393,21 @@ mod tests {
     }
 
     fn write_status(paths: &crate::paths::Paths, name: &str, success: bool, exit: i32) {
+        write_status_variant(paths, name, success, exit, false)
+    }
+
+    fn write_status_variant(
+        paths: &crate::paths::Paths,
+        name: &str,
+        success: bool,
+        exit: i32,
+        skipped: bool,
+    ) {
         let started = chrono::Utc::now();
         let outcome = crate::runner::RunOutcome {
             profile: name.to_string(),
             dry_run: false,
-            skipped: false,
+            skipped,
             success,
             exit_code: Some(exit),
             started_at: started,
@@ -1495,6 +1524,77 @@ mod tests {
         assert!(!app.rows[0].running);
         match &app.view {
             View::Logs(state) => assert!(state.follow_header.contains("finished ok")),
+            _ => panic!("view should stay live"),
+        }
+    }
+
+    #[test]
+    fn run_now_on_a_running_profile_joins_the_live_view_without_a_second_start() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
+        app.handle_key(key(KeyCode::Esc));
+        app.handle_key(key(KeyCode::Char('r')));
+        let starts = harness
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.starts_with("start:"))
+            .count();
+        assert_eq!(starts, 1, "an already-running profile is not started twice");
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("already running")),
+            "the absorbed run says so in the activity log: {:?}",
+            harness.action_texts()
+        );
+        assert!(
+            matches!(&app.view, View::Logs(state) if state.follow),
+            "pressing r on a running row opens the live view"
+        );
+    }
+
+    #[test]
+    fn skipped_outcomes_render_as_skipped_not_failed() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
+        harness.services.lock().unwrap().remove("all-daily");
+        write_status_variant(&app.paths, "all-daily", false, 1, true);
+        app.on_tick();
+        match &app.view {
+            View::Logs(state) => {
+                assert!(
+                    state.follow_header.contains("skipped"),
+                    "a skipped outcome must not read as a failure: {}",
+                    state.follow_header
+                );
+                assert!(!state.follow_header.contains("FAILED"));
+            }
+            _ => panic!("view should stay live"),
+        }
+    }
+
+    #[test]
+    fn stale_status_from_before_the_run_does_not_pose_as_its_result() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        write_status(&app.paths, "all-daily", false, 9);
+        app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
+        harness.services.lock().unwrap().remove("all-daily");
+        app.on_tick();
+        match &app.view {
+            View::Logs(state) => {
+                assert!(
+                    state.follow_header.contains("not running"),
+                    "a status older than the run start is not its result: {}",
+                    state.follow_header
+                );
+                assert!(!state.follow_header.contains("FAILED"));
+            }
             _ => panic!("view should stay live"),
         }
     }

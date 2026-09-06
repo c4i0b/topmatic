@@ -5,8 +5,12 @@ use std::process::Command;
 
 use crate::domain::profile::Scope;
 
+pub mod reset;
 pub mod sync;
 pub mod units;
+
+#[cfg(test)]
+mod test_support;
 
 pub trait SystemdCtl {
     fn unit_dir(&self) -> PathBuf;

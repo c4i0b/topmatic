@@ -2,13 +2,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 
-#[cfg(test)]
-use chrono::{DateTime, Utc};
-#[cfg(test)]
-use std::cell::RefCell;
-#[cfg(test)]
-use std::path::PathBuf;
-
 use crate::config::AppConfig;
 use crate::domain::profile::Scope;
 use crate::domain::schedule::SchedulePreset;
@@ -17,6 +10,9 @@ use crate::util::write_file_if_changed;
 
 use super::SystemdCtl;
 use super::units;
+
+#[cfg(test)]
+use crate::systemd::test_support::FakeCtl;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct SyncReport {
@@ -200,177 +196,6 @@ pub fn purge_profile_state(paths: &Paths, profile: &str) -> io::Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Default, PartialEq)]
-pub struct ResetReport {
-    pub removed_orphans: Vec<String>,
-    pub removed_units: bool,
-    pub purged_state: bool,
-    pub config_backup: Option<std::path::PathBuf>,
-}
-
-pub fn reset(ctl: &dyn SystemdCtl, paths: &Paths, include_config: bool) -> ResetReport {
-    let mut report = ResetReport::default();
-    let unit_dir = ctl.unit_dir();
-
-    for instance in ctl.instances() {
-        let _ = ctl.disable_timer(&instance);
-        report.removed_orphans.push(instance);
-    }
-    let _ = ctl.stop_all();
-
-    let mut removed_units = false;
-    let entries = fs::read_dir(&unit_dir)
-        .map(|read_dir| read_dir.flatten().collect::<Vec<_>>())
-        .unwrap_or_default();
-    for entry in entries {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let managed = name.starts_with("topmatic@")
-            && (name.ends_with(".timer.d")
-                || name == units::SERVICE_TEMPLATE
-                || name == units::TIMER_TEMPLATE);
-        if !managed {
-            continue;
-        }
-        let removed = match entry.file_type() {
-            Ok(file_type) if file_type.is_dir() => fs::remove_dir_all(entry.path()).is_ok(),
-            Ok(_) => fs::remove_file(entry.path()).is_ok(),
-            Err(_) => false,
-        };
-        removed_units = removed_units || removed;
-    }
-    report.removed_units = removed_units;
-
-    if paths.state_dir.exists() && fs::remove_dir_all(&paths.state_dir).is_ok() {
-        report.purged_state = true;
-    }
-
-    if include_config {
-        let config_file = paths.config_file();
-        if config_file.exists() {
-            let unique = unique_backup_path(&config_file);
-            if fs::rename(&config_file, &unique).is_ok() {
-                report.config_backup = Some(unique);
-            }
-        }
-    }
-
-    let _ = ctl.daemon_reload();
-    report
-}
-
-fn unique_backup_path(config_file: &std::path::Path) -> std::path::PathBuf {
-    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S%.3f");
-    let mut candidate = config_file.with_file_name(format!(
-        "{}.bak-{}",
-        config_file
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy(),
-        timestamp
-    ));
-    let mut counter = 0u32;
-    while candidate.exists() {
-        counter += 1;
-        candidate = config_file.with_file_name(format!(
-            "{}.bak-{}-{counter}",
-            config_file
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy(),
-            timestamp
-        ));
-    }
-    candidate
-}
-
-#[cfg(test)]
-pub struct FakeCtl {
-    dir: PathBuf,
-    calls: RefCell<Vec<String>>,
-    pub existing_instances: Vec<String>,
-    pub linger: Option<bool>,
-    pub fail_enable_for: Option<String>,
-}
-
-#[cfg(test)]
-impl FakeCtl {
-    pub fn new(dir: PathBuf) -> Self {
-        Self {
-            dir,
-            calls: RefCell::new(Vec::new()),
-            existing_instances: Vec::new(),
-            linger: Some(false),
-            fail_enable_for: None,
-        }
-    }
-
-    pub fn calls(&self) -> Vec<String> {
-        self.calls.borrow().clone()
-    }
-
-    fn record(&self, call: String) {
-        self.calls.borrow_mut().push(call);
-    }
-}
-
-#[cfg(test)]
-impl SystemdCtl for FakeCtl {
-    fn unit_dir(&self) -> PathBuf {
-        self.dir.clone()
-    }
-
-    fn daemon_reload(&self) -> io::Result<()> {
-        self.record("reload".to_string());
-        Ok(())
-    }
-
-    fn enable_timer(&self, profile: &str) -> io::Result<()> {
-        self.record(format!("enable:{profile}"));
-        if self.fail_enable_for.as_deref() == Some(profile) {
-            return Err(io::Error::other("boom"));
-        }
-        Ok(())
-    }
-
-    fn disable_timer(&self, profile: &str) -> io::Result<()> {
-        self.record(format!("disable:{profile}"));
-        Ok(())
-    }
-
-    fn start_service(&self, profile: &str) -> io::Result<()> {
-        self.record(format!("start:{profile}"));
-        Ok(())
-    }
-
-    fn stop_all(&self) -> io::Result<()> {
-        self.record("stop_all".to_string());
-        Ok(())
-    }
-
-    fn instances(&self) -> Vec<String> {
-        self.existing_instances.clone()
-    }
-
-    fn next_run(&self, _profile: &str) -> Option<DateTime<Utc>> {
-        None
-    }
-
-    fn timer_active(&self, profile: &str) -> bool {
-        self.calls
-            .borrow()
-            .iter()
-            .any(|call| call == &format!("enable:{profile}"))
-    }
-
-    fn linger_enabled(&self) -> Option<bool> {
-        self.linger
-    }
-
-    fn enable_linger(&self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,7 +213,6 @@ mod tests {
                 },
                 randomized_delay_sec: 900,
             },
-            cleanup: true,
             notify: NotifyPolicy::OnFailure,
             scope: Scope::User,
         }
@@ -611,53 +435,5 @@ mod tests {
         std::env::split_paths(&path)
             .map(|dir| dir.join("systemd-analyze"))
             .find(|candidate| candidate.is_file())
-    }
-
-    #[test]
-    fn reset_removes_units_state_and_backs_up_config() {
-        let tmp = tempfile::tempdir().unwrap();
-        let unit_dir = tmp.path().join("units");
-        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
-
-        fs::create_dir_all(unit_dir.join("topmatic@alpha.timer.d")).unwrap();
-        fs::write(unit_dir.join("topmatic@.service"), "unit").unwrap();
-        fs::write(unit_dir.join("topmatic@.timer"), "unit").unwrap();
-        fs::write(unit_dir.join("unrelated.timer"), "keep").unwrap();
-        fs::create_dir_all(paths.logs_dir("alpha")).unwrap();
-        fs::create_dir_all(&paths.config_dir).unwrap();
-        fs::write(paths.config_file(), "# config").unwrap();
-
-        let mut ctl = FakeCtl::new(unit_dir.clone());
-        ctl.existing_instances = vec!["alpha".to_string()];
-
-        let report = reset(&ctl, &paths, true);
-
-        assert!(!unit_dir.join("topmatic@.service").exists());
-        assert!(!unit_dir.join("topmatic@.timer").exists());
-        assert!(!unit_dir.join("topmatic@alpha.timer.d").exists());
-        assert!(unit_dir.join("unrelated.timer").exists());
-        assert!(!paths.state_dir.exists());
-        assert!(!paths.config_file().exists());
-        let backup = report.config_backup.expect("backup path reported");
-        assert!(fs::read_to_string(&backup).unwrap().contains("# config"));
-        assert!(!paths.config_file().exists());
-        assert!(!backup.starts_with(paths.config_file()));
-        assert!(ctl.calls().contains(&"stop_all".to_string()));
-        assert!(ctl.calls().contains(&"disable:alpha".to_string()));
-        assert!(ctl.calls().contains(&"reload".to_string()));
-    }
-
-    #[test]
-    fn reset_without_config_keeps_config_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
-        fs::create_dir_all(&paths.config_dir).unwrap();
-        fs::write(paths.config_file(), "# config").unwrap();
-        let ctl = FakeCtl::new(tmp.path().to_path_buf());
-
-        let report = reset(&ctl, &paths, false);
-
-        assert!(paths.config_file().exists());
-        assert_eq!(report.config_backup, None);
     }
 }

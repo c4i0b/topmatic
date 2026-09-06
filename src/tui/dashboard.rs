@@ -112,11 +112,7 @@ fn detail_lines<'a>(profile: &Profile, row: &ProfileRow, log_tail: Option<&str>)
         ]),
         Line::from(vec![
             Span::styled("options    ", Style::new().fg(Color::Cyan)),
-            Span::raw(format!(
-                "cleanup {} · notify {}",
-                on_off(profile.cleanup),
-                notify_label(profile.notify),
-            )),
+            Span::raw(format!("notify {}", notify_label(profile.notify),)),
         ]),
     ];
     if let Some(tail) = log_tail {
@@ -130,10 +126,6 @@ fn detail_lines<'a>(profile: &Profile, row: &ProfileRow, log_tail: Option<&str>)
         }
     }
     lines
-}
-
-fn on_off(value: bool) -> &'static str {
-    if value { "on" } else { "off" }
 }
 
 fn notify_label(policy: crate::domain::profile::NotifyPolicy) -> &'static str {
@@ -220,7 +212,6 @@ mod tests {
             name: "all-daily".to_string(),
             steps: (0..steps).map(|i| format!("step_{i}")).collect(),
             schedule: crate::domain::schedule::Schedule::default(),
-            cleanup: true,
             notify: crate::domain::profile::NotifyPolicy::OnFailure,
             scope: crate::domain::profile::Scope::User,
         }
@@ -315,7 +306,6 @@ mod tests {
                 "atuin".into(),
             ],
             schedule: crate::domain::schedule::Schedule::default(),
-            cleanup: true,
             notify: crate::domain::profile::NotifyPolicy::OnFailure,
             scope: crate::domain::profile::Scope::User,
         };

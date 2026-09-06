@@ -43,16 +43,10 @@ pub struct Profile {
     pub name: String,
     pub steps: Vec<String>,
     pub schedule: Schedule,
-    #[serde(default = "default_true")]
-    pub cleanup: bool,
     #[serde(default)]
     pub notify: NotifyPolicy,
     #[serde(default)]
     pub scope: Scope,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -123,7 +117,6 @@ mod tests {
         let profile: Profile = toml::from_str(&minimal_toml()).unwrap();
         assert_eq!(profile.name, "flatpak-daily");
         assert_eq!(profile.steps, vec!["flatpak"]);
-        assert!(profile.cleanup);
         assert_eq!(profile.notify, NotifyPolicy::OnFailure);
         assert_eq!(profile.scope, Scope::User);
     }
@@ -138,9 +131,8 @@ mod tests {
 
     #[test]
     fn explicit_values_override_defaults() {
-        let text = profile_toml("cleanup = false\nnotify = 'always'\nscope = 'system'");
+        let text = profile_toml("notify = 'always'\nscope = 'system'");
         let profile: Profile = toml::from_str(&text).unwrap();
-        assert!(!profile.cleanup);
         assert_eq!(profile.notify, NotifyPolicy::Always);
         assert_eq!(profile.scope, Scope::System);
     }

@@ -115,7 +115,13 @@ impl Schedule {
     pub fn summary(&self) -> String {
         match &self.preset {
             SchedulePreset::EveryNHours { hours } => format!("every {hours}h"),
+            SchedulePreset::Daily { hour: 0, minute: 0 } => "daily".to_string(),
             SchedulePreset::Daily { hour, minute } => format!("daily {hour:02}:{minute:02}"),
+            SchedulePreset::Weekly {
+                weekday,
+                hour: 0,
+                minute: 0,
+            } => format!("weekly {}", weekday.as_systemd()),
             SchedulePreset::Weekly {
                 weekday,
                 hour,
@@ -130,20 +136,10 @@ impl Schedule {
 pub fn quick_choices() -> Vec<(&'static str, Schedule)> {
     vec![
         (
-            "daily with random jitter",
+            "daily",
             Schedule {
                 preset: SchedulePreset::Daily { hour: 0, minute: 0 },
                 randomized_delay_sec: DEFAULT_DELAY_SEC,
-            },
-        ),
-        (
-            "daily at a fixed time",
-            Schedule {
-                preset: SchedulePreset::Daily {
-                    hour: 12,
-                    minute: 0,
-                },
-                randomized_delay_sec: 0,
             },
         ),
         (
@@ -151,7 +147,7 @@ pub fn quick_choices() -> Vec<(&'static str, Schedule)> {
             Schedule {
                 preset: SchedulePreset::Weekly {
                     weekday: Weekday::Mon,
-                    hour: 12,
+                    hour: 0,
                     minute: 0,
                 },
                 randomized_delay_sec: 900,
@@ -171,16 +167,6 @@ pub fn matches_quick_choice(schedule: &Schedule) -> Option<usize> {
     quick_choices()
         .iter()
         .position(|(_, choice)| choice == schedule)
-}
-
-pub fn format_delay(seconds: u64) -> String {
-    if seconds >= 3600 && seconds.is_multiple_of(3600) {
-        format!("{}h", seconds / 3600)
-    } else if seconds >= 60 {
-        format!("{}min", seconds / 60)
-    } else {
-        format!("{seconds}s")
-    }
 }
 
 #[cfg(test)]
@@ -236,6 +222,34 @@ mod tests {
     }
 
     #[test]
+    fn summary_hides_midnight_and_keeps_custom_times() {
+        assert_eq!(Schedule::default().summary(), "daily");
+        assert_eq!(
+            Schedule {
+                preset: SchedulePreset::Weekly {
+                    weekday: Weekday::Mon,
+                    hour: 0,
+                    minute: 0
+                },
+                randomized_delay_sec: 900,
+            }
+            .summary(),
+            "weekly Mon"
+        );
+        assert_eq!(
+            Schedule {
+                preset: SchedulePreset::Daily {
+                    hour: 9,
+                    minute: 30
+                },
+                randomized_delay_sec: 0,
+            }
+            .summary(),
+            "daily 09:30"
+        );
+    }
+
+    #[test]
     fn legacy_spread_normalizes_to_daily_anchor() {
         let legacy = SchedulePreset::LegacySpread {
             period: Some("daily".to_string()),
@@ -271,10 +285,21 @@ mod tests {
     }
 
     #[test]
-    fn formats_delays_in_human_units() {
-        assert_eq!(format_delay(3_600), "1h");
-        assert_eq!(format_delay(1_800), "30min");
-        assert_eq!(format_delay(45), "45s");
+    fn quick_choices_anchor_calendar_presets_at_midnight() {
+        for (_, choice) in quick_choices() {
+            match &choice.preset {
+                SchedulePreset::Daily { hour, minute }
+                | SchedulePreset::Weekly { hour, minute, .. } => {
+                    assert_eq!(
+                        (*hour, *minute),
+                        (0, 0),
+                        "{choice:?} must anchor at midnight"
+                    );
+                }
+                SchedulePreset::EveryNHours { hours } => assert_eq!(*hours, 6),
+                other => panic!("unexpected quick choice {other:?}"),
+            }
+        }
     }
 
     #[test]

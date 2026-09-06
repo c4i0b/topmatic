@@ -35,7 +35,6 @@ pub fn run(
     paths: &Paths,
     notify: &dyn NotifyBackend,
     dry_run: bool,
-    quiet: bool,
 ) -> anyhow::Result<RunOutcome> {
     fs::create_dir_all(&paths.config_dir)?;
     fs::create_dir_all(paths.state_dir.join("status"))?;
@@ -55,15 +54,7 @@ pub fn run(
     let mut lock = fd_lock::RwLock::new(lock_file);
 
     let outcome = match lock.try_write() {
-        Ok(_guard) => execute(
-            profile,
-            topgrade_bin,
-            paths,
-            dry_run,
-            started,
-            &log_path,
-            quiet,
-        ),
+        Ok(_guard) => execute(profile, topgrade_bin, paths, dry_run, started, &log_path),
         Err(_) => RunOutcome {
             profile: profile.name.clone(),
             dry_run,
@@ -106,7 +97,6 @@ fn execute(
     dry_run: bool,
     started: DateTime<Utc>,
     log_path: &Path,
-    quiet: bool,
 ) -> RunOutcome {
     let argv = topgrade_argv(profile, &paths.topgrade_config_file(), dry_run);
     let mut command = Command::new(topgrade_bin);
@@ -139,13 +129,13 @@ fn execute(
     let stderr_terminal = io::stdout();
     let out_handle = std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
-        let mut writer = Writer::new(BufWriter::new(log_out), stdout_terminal, !quiet);
+        let mut writer = Writer::new(BufWriter::new(log_out), stdout_terminal, true);
         let _ = io::copy(&mut reader, &mut writer);
         let _ = writer.flush();
     });
     let err_handle = std::thread::spawn(move || {
         let mut reader = BufReader::new(stderr);
-        let mut writer = Writer::new(BufWriter::new(log_err), stderr_terminal, !quiet);
+        let mut writer = Writer::new(BufWriter::new(log_err), stderr_terminal, true);
         let _ = io::copy(&mut reader, &mut writer);
         let _ = writer.flush();
     });
@@ -214,6 +204,18 @@ pub fn read_status(paths: &Paths, profile: &str) -> anyhow::Result<Option<RunOut
     Ok(Some(serde_json::from_str(&fs::read_to_string(path)?)?))
 }
 
+impl RunOutcome {
+    pub fn last_run_summary(&self) -> String {
+        if self.skipped {
+            "skipped".to_string()
+        } else if self.success {
+            self.finished_at.format("ok %d %b %H:%M").to_string()
+        } else {
+            self.finished_at.format("FAILED %d %b %H:%M").to_string()
+        }
+    }
+}
+
 struct Writer<A: Write, B: Write> {
     out: A,
     terminal: B,
@@ -244,6 +246,7 @@ impl<A: Write, B: Write> Write for Writer<A, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn writer(tee: bool) -> (Writer<BufWriter<std::fs::File>, Vec<u8>>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -255,6 +258,30 @@ mod tests {
             .open(&log)
             .unwrap();
         (Writer::new(BufWriter::new(file), Vec::new(), tee), dir)
+    }
+
+    fn outcome(skipped: bool, success: bool) -> RunOutcome {
+        RunOutcome {
+            profile: "alpha".to_string(),
+            dry_run: false,
+            skipped,
+            success,
+            exit_code: Some(0),
+            started_at: Utc::now(),
+            finished_at: Utc.with_ymd_and_hms(2026, 9, 6, 8, 30, 0).unwrap(),
+            duration_secs: 1.0,
+            log_path: PathBuf::from("/tmp/alpha.log"),
+        }
+    }
+
+    #[test]
+    fn last_run_summary_matches_the_cli_columns() {
+        assert_eq!(outcome(true, false).last_run_summary(), "skipped");
+        assert_eq!(outcome(false, true).last_run_summary(), "ok 06 Sep 08:30");
+        assert_eq!(
+            outcome(false, false).last_run_summary(),
+            "FAILED 06 Sep 08:30"
+        );
     }
 
     #[test]

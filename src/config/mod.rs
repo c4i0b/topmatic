@@ -166,6 +166,20 @@ pub fn save(paths: &Paths, config: &AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn template() -> String {
+    "# topmatic configuration.\n\
+     # Add profiles with the TUI (or hand-edit below); topmatic reconciles systemd on next open.\n\
+     #\n\
+     # Example:\n\
+     # [[profiles]]\n\
+     # name = \"daily\"\n\
+     # steps = [\"cargo\", \"flatpak\"]\n\
+     # [profiles.schedule]\n\
+     # preset = \"daily\"\n\
+     # randomized_delay_sec = 1800\n"
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,7 +195,6 @@ mod tests {
             name: name.to_string(),
             steps: vec!["flatpak".to_string()],
             schedule: Schedule::default(),
-            cleanup: true,
             notify: Default::default(),
             scope: Default::default(),
         }
@@ -190,8 +203,7 @@ mod tests {
     #[test]
     fn upsert_replaces_by_name_and_appends_new() {
         let mut config = AppConfig::default();
-        let mut p1 = sample_profile("alpha");
-        p1.cleanup = false;
+        let p1 = sample_profile("alpha");
         config.upsert(p1.clone());
         config.upsert(sample_profile("beta"));
         let mut p1_updated = sample_profile("alpha");
@@ -199,7 +211,6 @@ mod tests {
         config.upsert(p1_updated);
         assert_eq!(config.profiles.len(), 2);
         assert_eq!(config.profile("alpha").unwrap().steps, vec!["cargo"]);
-        assert!(config.profile("alpha").unwrap().cleanup);
     }
 
     #[test]
@@ -209,6 +220,14 @@ mod tests {
         assert!(config.remove("alpha"));
         assert!(!config.remove("alpha"));
         assert!(config.profiles.is_empty());
+    }
+
+    #[test]
+    fn template_parses_as_an_empty_config_and_documents_profiles() {
+        let text = template();
+        assert!(text.contains("[[profiles]]"));
+        let parsed: AppConfig = toml::from_str(&text).unwrap();
+        assert_eq!(parsed, AppConfig::default());
     }
 
     #[test]

@@ -15,6 +15,7 @@ pub struct LogsState {
     pub selected: usize,
     pub content: Option<String>,
     pub scroll: u16,
+    pub follow_offset: u16,
     pub follow: bool,
     pub follow_header: String,
 }
@@ -42,6 +43,7 @@ impl LogsState {
             selected: 0,
             content: None,
             scroll: 0,
+            follow_offset: 0,
             follow: false,
             follow_header: String::new(),
         }
@@ -66,11 +68,11 @@ impl LogsState {
             return match key.code {
                 KeyCode::Esc | KeyCode::Char('h' | 'H') => true,
                 KeyCode::Up | KeyCode::Char('k' | 'K') => {
-                    self.scroll = self.scroll.saturating_sub(1);
+                    self.follow_offset = self.follow_offset.saturating_add(1);
                     false
                 }
                 KeyCode::Down | KeyCode::Char('j' | 'J') => {
-                    self.scroll = self.scroll.saturating_add(1);
+                    self.follow_offset = self.follow_offset.saturating_sub(1);
                     false
                 }
                 _ => false,
@@ -135,8 +137,13 @@ pub fn tail(paths: &Paths, profile: &str, lines: usize) -> Option<String> {
 
 pub fn render(state: &LogsState, frame: &mut Frame, area: Rect) {
     if state.follow {
+        let visible = area.height.saturating_sub(2) as usize;
+        let total = state.content.as_ref().map_or(0, |c| c.lines().count());
+        let from_top = total
+            .saturating_sub(visible)
+            .saturating_sub(state.follow_offset as usize) as u16;
         let paragraph = Paragraph::new(state.content.clone().unwrap_or_default())
-            .scroll((state.scroll, 0))
+            .scroll((from_top, 0))
             .block(
                 Block::bordered()
                     .title(state.follow_header.clone())
@@ -196,7 +203,12 @@ pub fn render(state: &LogsState, frame: &mut Frame, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::path::PathBuf;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
 
     #[test]
     fn lists_runs_newest_first() {
@@ -235,5 +247,62 @@ mod tests {
         assert_eq!(tail(&paths, "alpha", 2).unwrap(), "l3\nl4");
         assert_eq!(tail(&paths, "alpha", 10).unwrap(), "l1\nl2\nl3\nl4");
         assert!(tail(&paths, "ghost", 5).is_none());
+    }
+
+    #[test]
+    fn follow_scrolling_counts_from_the_bottom_and_repins() {
+        let mut state = LogsState::follow("alpha");
+        assert_eq!(state.follow_offset, 0, "starts pinned to the newest line");
+        assert!(!state.handle_key(key(KeyCode::Up)));
+        assert_eq!(state.follow_offset, 1);
+        assert!(!state.handle_key(key(KeyCode::Char('k'))));
+        assert_eq!(state.follow_offset, 2);
+        assert!(!state.handle_key(key(KeyCode::Down)));
+        assert_eq!(state.follow_offset, 1);
+        assert!(!state.handle_key(key(KeyCode::Char('j'))));
+        assert_eq!(
+            state.follow_offset, 0,
+            "reaching the bottom re-engages auto-scroll"
+        );
+        assert!(!state.handle_key(key(KeyCode::Down)));
+        assert_eq!(state.follow_offset, 0, "down at the bottom stays pinned");
+        assert!(state.handle_key(key(KeyCode::Esc)), "esc still leaves");
+    }
+
+    #[test]
+    fn follow_render_pins_the_newest_line_and_scrolls_on_demand() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut state = LogsState::follow("alpha");
+        state.content = Some(
+            (1..=40)
+                .map(|i| format!("line-{i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        terminal
+            .draw(|frame| render(&state, frame, frame.area()))
+            .unwrap();
+        let pinned = terminal.backend().to_string();
+        assert!(
+            pinned.contains("line-40"),
+            "pinned at the bottom shows the newest line:\n{pinned}"
+        );
+        assert!(!pinned.contains("line-1"));
+
+        state.handle_key(key(KeyCode::Up));
+        state.handle_key(key(KeyCode::Up));
+        terminal
+            .draw(|frame| render(&state, frame, frame.area()))
+            .unwrap();
+        let scrolled = terminal.backend().to_string();
+        assert!(
+            scrolled.contains("line-38"),
+            "scrolled back two lines shows the older window:\n{scrolled}"
+        );
+        assert!(!scrolled.contains("line-40"));
     }
 }

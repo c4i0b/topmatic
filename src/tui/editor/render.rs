@@ -42,33 +42,47 @@ impl EditorState {
         let focus_steps = self.section == Section::Steps;
         let columns = self.steps_columns.max(1);
         let rows = (steps_end - steps_start).div_ceil(columns);
-        for row in 0..rows {
-            let mut spans: Vec<String> = Vec::new();
-            let mut widest = 0usize;
-            for column in 0..columns {
-                let index = steps_start + row * columns + column;
-                if index >= steps_end {
-                    break;
+        let grid: Vec<Vec<Option<String>>> = (0..rows)
+            .map(|row| {
+                (0..columns)
+                    .map(|column| {
+                        let index = steps_start + row * columns + column;
+                        if index >= steps_end {
+                            return None;
+                        }
+                        self.filtered_steps().get(index).map(|id| {
+                            let marker = if self.selected_steps.contains(*id) {
+                                "[x]"
+                            } else {
+                                "[ ]"
+                            };
+                            let cursor = focus_steps && index == self.list_index;
+                            format!("{}{marker} {id}", if cursor { "▶ " } else { "  " })
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+        let column_widths: Vec<usize> = (0..columns)
+            .map(|column| {
+                grid.iter()
+                    .filter_map(|row| row.get(column))
+                    .filter_map(|cell| cell.as_deref())
+                    .map(|cell: &str| cell.chars().count())
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
+        for row in &grid {
+            let mut with_gaps: Vec<Span> = Vec::with_capacity(row.len() * 2);
+            for (column, cell) in row.iter().enumerate() {
+                if let Some(cell) = cell {
+                    if column > 0 {
+                        with_gaps.push(Span::raw("  "));
+                    }
+                    let padding = column_widths[column].saturating_sub(cell.chars().count());
+                    with_gaps.push(Span::raw(format!("{cell}{}", " ".repeat(padding))));
                 }
-                if let Some(id) = self.filtered_steps().get(index) {
-                    let marker = if self.selected_steps.contains(*id) {
-                        "[x]"
-                    } else {
-                        "[ ]"
-                    };
-                    let cursor = focus_steps && index == self.list_index;
-                    let cell = format!("{}{marker} {id}", if cursor { "▶ " } else { "  " });
-                    widest = widest.max(cell.chars().count());
-                    spans.push(cell);
-                }
-            }
-            let mut with_gaps = Vec::with_capacity(spans.len() * 2);
-            for (i, cell) in spans.into_iter().enumerate() {
-                if i > 0 {
-                    with_gaps.push(Span::raw("  "));
-                }
-                let padding = widest - cell.chars().count();
-                with_gaps.push(Span::raw(format!("{cell}{}", " ".repeat(padding))));
             }
             lines.push(Line::from(with_gaps));
         }
@@ -356,6 +370,57 @@ mod tests {
         assert!(
             !row.contains("step_3"),
             "cells wrap onto the next rendered row, not across the first"
+        );
+    }
+
+    #[test]
+    fn multi_column_grid_aligns_every_column_across_rows() {
+        let catalog = vec![
+            "a".to_string(),
+            "very-long-step-name".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "medium-step".to_string(),
+        ];
+        let mut editor = EditorState::from_preset(
+            catalog.clone(),
+            catalog,
+            "all-daily",
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        editor.set_steps_columns(3);
+        let lines: Vec<String> = editor.body_lines().iter().map(line_text).collect();
+        let first = lines
+            .iter()
+            .find(|line| line.contains("very-long-step-name"))
+            .expect("first grid row renders");
+        let second = lines
+            .iter()
+            .find(|line| line.contains("medium-step"))
+            .expect("second grid row renders");
+
+        let columns_of = |line: &str, names: &[&str]| -> Vec<usize> {
+            names
+                .iter()
+                .map(|name| {
+                    line.find(&format!("] {name}"))
+                        .unwrap_or_else(|| panic!("{name:?} missing from row: {line:?}"))
+                })
+                .collect()
+        };
+        let first_offsets = columns_of(first, &["a", "very-long-step-name", "b"]);
+        let second_offsets = columns_of(second, &["c", "d", "medium-step"]);
+
+        assert_eq!(
+            first_offsets[1] - first_offsets[0],
+            second_offsets[1] - second_offsets[0],
+            "column 2 starts at the same offset on every row"
+        );
+        assert_eq!(
+            first_offsets[2] - first_offsets[1],
+            second_offsets[2] - second_offsets[1],
+            "column 3 starts at the same offset on every row"
         );
     }
 

@@ -41,14 +41,19 @@ fn app_loop(terminal: &mut ratatui::DefaultTerminal) -> anyhow::Result<()> {
         app.set_steps_columns(terminal.size()?.width);
         terminal.draw(|frame| views::draw(&app, frame))?;
         if event::poll(Duration::from_millis(200))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press {
-                        app.handle_key(key);
+            loop {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if key.kind == KeyEventKind::Press {
+                            app.handle_key(key);
+                        }
                     }
+                    Event::Mouse(mouse) => app.handle_mouse(mouse),
+                    _ => {}
                 }
-                Event::Mouse(mouse) => app.handle_mouse(mouse),
-                _ => {}
+                if !event::poll(Duration::ZERO)? {
+                    break;
+                }
             }
         }
         if app.should_quit {

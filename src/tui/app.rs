@@ -403,7 +403,7 @@ impl App {
                     None => format!("{profile} not running"),
                 }
             };
-            state.content = logs::tail(&self.paths, &profile, 200);
+            state.set_content(logs::tail(&self.paths, &profile, 200));
         }
     }
 

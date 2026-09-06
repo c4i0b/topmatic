@@ -14,6 +14,8 @@ pub struct LogsState {
     pub entries: Vec<PathBuf>,
     pub selected: usize,
     pub content: Option<String>,
+    pub content_lines: usize,
+    pub viewport: std::cell::Cell<usize>,
     pub scroll: u16,
     pub follow_offset: u16,
     pub follow: bool,
@@ -42,11 +44,24 @@ impl LogsState {
             entries: Vec::new(),
             selected: 0,
             content: None,
+            content_lines: 0,
+            viewport: std::cell::Cell::new(0),
             scroll: 0,
             follow_offset: 0,
             follow: false,
             follow_header: String::new(),
         }
+    }
+
+    pub fn set_content(&mut self, content: Option<String>) {
+        self.content_lines = content
+            .as_ref()
+            .map_or(0, |text| sanitize_log_text(text).lines().count());
+        self.content = content;
+    }
+
+    fn page(&self) -> u16 {
+        self.viewport.get().max(1).saturating_sub(1) as u16
     }
 
     pub fn reload(&mut self, paths: &Paths) {
@@ -56,15 +71,18 @@ impl LogsState {
     }
 
     pub fn load_selected(&mut self) {
-        self.content = self
+        let raw = self
             .entries
             .get(self.selected)
-            .and_then(|path| std::fs::read_to_string(path).ok());
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|text| sanitize_log_text(&text));
+        self.set_content(raw);
         self.scroll = 0;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         if self.follow {
+            let page = self.page();
             return match key.code {
                 KeyCode::Esc | KeyCode::Char('h' | 'H') => true,
                 KeyCode::Up | KeyCode::Char('k' | 'K') => {
@@ -75,9 +93,26 @@ impl LogsState {
                     self.follow_offset = self.follow_offset.saturating_sub(1);
                     false
                 }
+                KeyCode::PageUp => {
+                    self.follow_offset = self.follow_offset.saturating_add(page);
+                    false
+                }
+                KeyCode::PageDown => {
+                    self.follow_offset = self.follow_offset.saturating_sub(page);
+                    false
+                }
+                KeyCode::Home => {
+                    self.follow_offset = self.content_lines.saturating_sub(1) as u16;
+                    false
+                }
+                KeyCode::End => {
+                    self.follow_offset = 0;
+                    false
+                }
                 _ => false,
             };
         }
+        let page = self.page() as usize;
         match key.code {
             KeyCode::Esc | KeyCode::Char('h' | 'H') => return true,
             KeyCode::Up | KeyCode::Char('k' | 'K') => {
@@ -93,6 +128,39 @@ impl LogsState {
                     self.scroll = self.scroll.saturating_add(1);
                 } else if self.selected + 1 < self.entries.len() {
                     self.selected += 1;
+                    self.load_selected();
+                }
+            }
+            KeyCode::PageUp => {
+                if self.content.is_some() {
+                    self.scroll = self.scroll.saturating_sub(page as u16);
+                } else {
+                    self.selected = self.selected.saturating_sub(page);
+                    self.load_selected();
+                }
+            }
+            KeyCode::PageDown => {
+                if self.content.is_some() {
+                    let max = self.content_lines.saturating_sub(1) as u16;
+                    self.scroll = self.scroll.saturating_add(page as u16).min(max);
+                } else if self.selected + 1 < self.entries.len() {
+                    self.selected = (self.selected + page).min(self.entries.len() - 1);
+                    self.load_selected();
+                }
+            }
+            KeyCode::Home => {
+                if self.content.is_some() {
+                    self.scroll = 0;
+                } else {
+                    self.selected = 0;
+                    self.load_selected();
+                }
+            }
+            KeyCode::End => {
+                if self.content.is_some() {
+                    self.scroll = self.content_lines.saturating_sub(1) as u16;
+                } else if !self.entries.is_empty() {
+                    self.selected = self.entries.len() - 1;
                     self.load_selected();
                 }
             }
@@ -125,10 +193,47 @@ pub fn list_runs(paths: &Paths, profile: &str) -> Vec<PathBuf> {
     entries
 }
 
+pub fn sanitize_log_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.next() {
+                Some('[') => {
+                    for n in chars.by_ref() {
+                        if ('\x40'..='\x7e').contains(&n) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    for n in chars.by_ref() {
+                        if n == '\x07' {
+                            break;
+                        }
+                        if n == '\x1b' {
+                            let _ = chars.next();
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => {}
+            },
+            '\n' => out.push('\n'),
+            '\t' => out.push_str("    "),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 pub fn tail(paths: &Paths, profile: &str, lines: usize) -> Option<String> {
     let newest = list_runs(paths, profile).into_iter().next()?;
     let content = std::fs::read_to_string(newest).ok()?;
-    let mut tail: Vec<&str> = content.lines().collect();
+    let sanitized = sanitize_log_text(&content);
+    let mut tail: Vec<&str> = sanitized.lines().collect();
     if tail.len() > lines {
         tail = tail.split_off(tail.len() - lines);
     }
@@ -136,9 +241,10 @@ pub fn tail(paths: &Paths, profile: &str, lines: usize) -> Option<String> {
 }
 
 pub fn render(state: &LogsState, frame: &mut Frame, area: Rect) {
+    state.viewport.set(area.height.saturating_sub(2) as usize);
     if state.follow {
-        let visible = area.height.saturating_sub(2) as usize;
-        let total = state.content.as_ref().map_or(0, |c| c.lines().count());
+        let visible = state.viewport.get();
+        let total = state.content_lines;
         let from_top = total
             .saturating_sub(visible)
             .saturating_sub(state.follow_offset as usize) as u16;
@@ -270,17 +376,87 @@ mod tests {
     }
 
     #[test]
+    fn sanitizer_strips_real_ansi_noise_from_run_logs() {
+        let raw = "Updating Proton-EM...\r\r\x1b[2K\r\x1b[32mAlready up to date: Proton-EM";
+        assert_eq!(
+            sanitize_log_text(raw),
+            "Updating Proton-EM...Already up to date: Proton-EM",
+            "CSI erase/color sequences and carriage returns vanish (fixture from the 20260906-233646 host log)"
+        );
+        assert_eq!(
+            sanitize_log_text("\x1b[1mbold\x1b[m and \x1b[4munder\x1b[0m\ttab"),
+            "bold and under    tab",
+            "SGR sequences drop and tabs expand"
+        );
+        assert_eq!(
+            sanitize_log_text("keep unicode \u{2015} and \u{00a7} intact\n"),
+            "keep unicode \u{2015} and \u{00a7} intact\n",
+            "printable unicode survives, newlines survive"
+        );
+        assert_eq!(sanitize_log_text("\x08\x7fdrop"), "drop");
+    }
+
+    #[test]
+    fn follow_page_and_home_end_keys() {
+        let mut state = LogsState::follow("alpha");
+        state.set_content(Some(
+            (1..=100)
+                .map(|i| format!("l{i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+        state.viewport.set(11);
+
+        assert!(!state.handle_key(key(KeyCode::PageUp)));
+        assert_eq!(state.follow_offset, 10);
+        assert!(!state.handle_key(key(KeyCode::PageDown)));
+        assert_eq!(state.follow_offset, 0, "page down re-pins at the bottom");
+
+        assert!(!state.handle_key(key(KeyCode::Home)));
+        assert_eq!(state.follow_offset, 99, "home jumps to the very top");
+        assert!(!state.handle_key(key(KeyCode::End)));
+        assert_eq!(state.follow_offset, 0, "end returns to the pinned bottom");
+    }
+
+    #[test]
+    fn browse_page_and_home_end_keys() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let dir = paths.logs_dir("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("20260101-010101.log"),
+            (1..=50)
+                .map(|i| format!("l{i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let mut state = LogsState::open(&paths, "alpha");
+        state.viewport.set(11);
+
+        state.handle_key(key(KeyCode::End));
+        assert_eq!(state.scroll, 49, "end jumps to the last line");
+        state.handle_key(key(KeyCode::Home));
+        assert_eq!(state.scroll, 0);
+        state.handle_key(key(KeyCode::PageDown));
+        assert_eq!(state.scroll, 10);
+        state.handle_key(key(KeyCode::PageUp));
+        assert_eq!(state.scroll, 0);
+    }
+
+    #[test]
     fn follow_render_pins_the_newest_line_and_scrolls_on_demand() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
         let mut state = LogsState::follow("alpha");
-        state.content = Some(
+        state.set_content(Some(
             (1..=40)
                 .map(|i| format!("line-{i}"))
                 .collect::<Vec<_>>()
                 .join("\n"),
-        );
+        ));
 
         let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
         terminal

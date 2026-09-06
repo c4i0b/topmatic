@@ -312,9 +312,10 @@ impl App {
         true
     }
 
-    pub fn set_steps_columns(&mut self, width: u16) {
+    pub fn set_editor_layout(&mut self, width: u16, height: u16) {
         if let View::Editor(state) = &mut self.view {
-            state.set_steps_columns(state.steps_columns_for_width(width));
+            let rows = (height as usize).saturating_sub(13).max(1);
+            state.set_steps_columns(state.steps_columns_for(width, rows));
         }
     }
 

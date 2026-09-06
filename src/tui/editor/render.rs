@@ -9,30 +9,18 @@ use super::{EditorState, ScheduleRow, Section};
 
 impl EditorState {
     pub(crate) fn steps_header(&self) -> Line<'static> {
-        let steps_total = self.filtered_steps().len();
-        let display_first = if steps_total == 0 {
-            0
-        } else {
-            self.steps_window().0 + 1
-        };
-        let filter_label = if self.steps_filter.is_engaged() {
-            format!(" filter: {}", self.steps_filter.filter_query())
-        } else {
-            String::new()
-        };
+        let mut label = format!("steps (selected: {})", self.selected_steps.len());
+        if self.steps_filter.is_engaged() {
+            label.push_str(&format!(
+                " [{}/{}]",
+                self.filtered_steps().len(),
+                self.catalog.len()
+            ));
+            label.push_str(&format!(" filter: {}", self.steps_filter.filter_query()));
+        }
         Line::from(vec![
             focus_marker(self.section == Section::Steps),
-            Span::styled(
-                format!(
-                    "steps (selected: {}) [{}-{}/{}]{}",
-                    self.selected_steps.len(),
-                    display_first,
-                    self.steps_window().1,
-                    steps_total,
-                    filter_label,
-                ),
-                Style::new().fg(Color::Cyan),
-            ),
+            Span::styled(label, Style::new().fg(Color::Cyan)),
         ])
     }
 
@@ -269,7 +257,7 @@ mod tests {
             .map(|span| span.content.clone())
             .collect();
         assert_eq!(
-            text, "▸steps (selected: 162) [1-10/162]",
+            text, "▸steps (selected: 162)",
             "the screenshot steps line renders exactly this text, nothing more"
         );
     }
@@ -352,6 +340,30 @@ mod tests {
             committed.contains("filter: flat") && !committed.contains('▏'),
             "a committed filter stays visible without the caret: {committed:?}"
         );
+    }
+
+    #[test]
+    fn every_step_renders_when_columns_fit_the_height() {
+        let catalog: Vec<String> = (0..20).map(|i| format!("step_{i}")).collect();
+        let mut editor = EditorState::from_preset(
+            catalog.clone(),
+            catalog,
+            "all-daily",
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        editor.set_steps_columns(4);
+        let text: String = editor
+            .body_lines()
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for step in 0..20 {
+            assert!(
+                text.contains(&format!("step_{step}")),
+                "step_{step} must be visible without paging"
+            );
+        }
     }
 
     #[test]

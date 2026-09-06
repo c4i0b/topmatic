@@ -38,7 +38,8 @@ fn app_loop(terminal: &mut ratatui::DefaultTerminal) -> anyhow::Result<()> {
     let mut app = App::boot()?;
     loop {
         app.on_tick();
-        app.set_steps_columns(terminal.size()?.width);
+        let size = terminal.size()?;
+        app.set_editor_layout(size.width, size.height);
         terminal.draw(|frame| views::draw(&app, frame))?;
         if event::poll(Duration::from_millis(200))? {
             loop {

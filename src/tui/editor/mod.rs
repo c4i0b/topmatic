@@ -339,6 +339,13 @@ impl EditorState {
         self.name_popup = Some(LineEdit::new(prefill));
     }
 
+    pub fn reopen_name_popup(&mut self) {
+        self.summary = None;
+        self.name_popup = Some(LineEdit::new(
+            self.confirmed_name.clone().unwrap_or_default(),
+        ));
+    }
+
     fn reset_indices(&mut self) {
         self.list_index = 0;
         self.schedule_index = 0;

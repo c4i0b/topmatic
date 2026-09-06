@@ -523,6 +523,8 @@ impl App {
                 Ok(plan) => plan,
                 Err(error) => {
                     self.message = error;
+                    let mut state = state;
+                    state.reopen_name_popup();
                     self.view = View::Editor(Box::new(state));
                     return;
                 }
@@ -771,12 +773,25 @@ mod tests {
             "colliding with an existing profile must report and stay in the editor: {:?}",
             app.message
         );
-        assert!(
-            matches!(app.view, View::Editor(_)),
-            "the user stays on the creation screen instead of silently losing the draft"
-        );
+        match &app.view {
+            View::Editor(state) => {
+                assert!(
+                    state.name_popup.is_some(),
+                    "a colliding save reopens the name popup so the user can fix the name in place"
+                );
+                assert!(
+                    state.summary.is_none(),
+                    "the save summary must be dismissed when the name popup reopens"
+                );
+            }
+            _ => panic!("the user stays on the creation screen, not the dashboard"),
+        }
         let saved = crate::config::load(&app.paths).unwrap();
-        assert_eq!(saved.profiles.len(), 2, "no profile is created on collision");
+        assert_eq!(
+            saved.profiles.len(),
+            2,
+            "no profile is created on collision"
+        );
     }
 
     #[test]
@@ -801,6 +816,27 @@ mod tests {
                 .unwrap()
                 .contains(&"enable:all-daily".to_string()),
             "saving converges the new timer"
+        );
+    }
+
+    #[test]
+    fn editing_keeps_the_same_name_and_saves_in_place() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.view, View::Editor(_)));
+        save_editor_profile(&mut app, "all-daily", "all-daily");
+
+        let saved = crate::config::load(&app.paths).unwrap();
+        assert_eq!(
+            saved.profiles.len(),
+            1,
+            "no duplicate profile on in-place save"
+        );
+        assert_eq!(saved.profiles[0].name, "all-daily");
+        assert!(app.last_action.contains("saved all-daily"));
+        assert!(
+            matches!(app.view, View::Dashboard),
+            "edit-with-same-name must return to the dashboard, not stay blocked"
         );
     }
 

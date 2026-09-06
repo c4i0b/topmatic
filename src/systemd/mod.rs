@@ -1,7 +1,9 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use std::io;
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::domain::profile::Scope;
 
@@ -76,16 +78,13 @@ impl SystemdCtl for RealSystemdCtl {
     }
 
     fn next_run(&self, profile: &str) -> Option<DateTime<Utc>> {
-        let output = self
-            .systemctl(&[
-                "show",
-                &units::timer_instance(profile),
-                "-p",
-                "NextElapseUSecRealtime",
-                "--value",
-            ])
-            .output()
-            .ok()?;
+        let output = run_output(self.systemctl(&[
+            "show",
+            &units::timer_instance(profile),
+            "-p",
+            "NextElapseUSecRealtime",
+            "--value",
+        ]))?;
         if !output.status.success() {
             return None;
         }
@@ -93,37 +92,35 @@ impl SystemdCtl for RealSystemdCtl {
     }
 
     fn timer_active(&self, profile: &str) -> bool {
-        self.systemctl(&["is-active", &units::timer_instance(profile)])
-            .output()
+        run_output(self.systemctl(&["is-active", &units::timer_instance(profile)]))
             .map(|output| output.status.success())
             .unwrap_or(false)
     }
 
     fn service_active(&self, profile: &str) -> bool {
-        Command::new("systemctl")
-            .args([
-                "--user",
-                "is-active",
-                &units::timer_instance(profile).replace(".timer", ".service"),
-            ])
-            .output()
+        let mut command = Command::new("systemctl");
+        command.args([
+            "--user",
+            "is-active",
+            &units::timer_instance(profile).replace(".timer", ".service"),
+        ]);
+        run_output(command)
             .map(|output| output.status.success())
             .unwrap_or(false)
     }
 
     fn service_since(&self, profile: &str) -> Option<DateTime<Utc>> {
         let unit = units::timer_instance(profile).replace(".timer", ".service");
-        let output = Command::new("systemctl")
-            .args([
-                "--user",
-                "show",
-                &unit,
-                "-p",
-                "ActiveEnterTimestamp",
-                "--value",
-            ])
-            .output()
-            .ok()?;
+        let mut command = Command::new("systemctl");
+        command.args([
+            "--user",
+            "show",
+            &unit,
+            "-p",
+            "ActiveEnterTimestamp",
+            "--value",
+        ]);
+        let output = run_output(command)?;
         parse_systemd_timestamp(String::from_utf8_lossy(&output.stdout).trim())
     }
 
@@ -136,10 +133,9 @@ impl SystemdCtl for RealSystemdCtl {
 
     fn linger_enabled(&self) -> Option<bool> {
         let user = std::env::var("USER").ok()?;
-        let output = Command::new("loginctl")
-            .args(["show-user", &user, "-p", "Linger", "--value"])
-            .output()
-            .ok()?;
+        let mut command = Command::new("loginctl");
+        command.args(["show-user", &user, "-p", "Linger", "--value"]);
+        let output = run_output(command)?;
         if !output.status.success() {
             return None;
         }
@@ -151,12 +147,70 @@ impl SystemdCtl for RealSystemdCtl {
     }
 }
 
+const SYSTEMD_TIMEOUT: Duration = Duration::from_secs(10);
+
 fn run_status(mut command: Command) -> io::Result<()> {
-    let status = command.status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!("command failed with {status}")))
+    run_status_with_timeout(&mut command, SYSTEMD_TIMEOUT)
+}
+
+fn run_status_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<()> {
+    let mut child = command.spawn()?;
+    match wait_timeout(&mut child, timeout)? {
+        Some(status) if status.success() => Ok(()),
+        Some(status) => Err(io::Error::other(format!("command failed with {status}"))),
+        None => Err(io::Error::other(format!(
+            "timed out after {}s",
+            timeout.as_secs()
+        ))),
+    }
+}
+
+fn run_output(command: Command) -> Option<Output> {
+    run_output_with_timeout(command, SYSTEMD_TIMEOUT)
+}
+
+fn run_output_with_timeout(mut command: Command, timeout: Duration) -> Option<Output> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    match wait_timeout(&mut child, timeout) {
+        Ok(Some(_)) => {}
+        Ok(None) | Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    }
+    let mut stdout = Vec::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_end(&mut stdout);
+    }
+    let status = child.wait().ok()?;
+    Some(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
+fn wait_timeout(child: &mut Child, timeout: Duration) -> io::Result<Option<ExitStatus>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(Some(status)),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    child.wait()?;
+                    return Ok(None);
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -279,5 +333,39 @@ mod tests {
         std::env::split_paths(&path)
             .map(|dir| dir.join("systemd-analyze"))
             .find(|candidate| candidate.is_file())
+    }
+
+    #[test]
+    fn run_status_reports_success_and_failure() {
+        let mut ok = Command::new("/bin/true");
+        assert!(run_status_with_timeout(&mut ok, Duration::from_secs(5)).is_ok());
+        let mut fail = Command::new("/bin/false");
+        let error = run_status_with_timeout(&mut fail, Duration::from_secs(5))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("command failed"), "got: {error}");
+    }
+
+    #[test]
+    fn run_status_kills_a_hanging_command() {
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        let error = run_status_with_timeout(&mut command, Duration::from_millis(150))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("timed out"), "got: {error}");
+    }
+
+    #[test]
+    fn run_output_captures_stdout_and_kills_a_hanging_command() {
+        let mut ok = Command::new("/bin/echo");
+        ok.arg("hello");
+        let output = run_output_with_timeout(ok, Duration::from_secs(5)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+
+        let mut hang = Command::new("sleep");
+        hang.arg("60");
+        assert!(run_output_with_timeout(hang, Duration::from_millis(150)).is_none());
     }
 }

@@ -11,7 +11,12 @@ pub fn topgrade_argv(profile: &Profile, topgrade_config: &Path, dry_run: bool) -
     ];
     if dry_run {
         argv.push("--dry-run".into());
+    } else {
+        argv.push("--run-type".into());
+        argv.push("damp".into());
     }
+    argv.push("--log-filter".into());
+    argv.push("info".into());
     if !profile.steps.is_empty() {
         argv.push("--only".into());
         argv.extend(profile.steps.iter().map(|s| s.as_str().into()));
@@ -55,10 +60,46 @@ mod tests {
                 "--config",
                 "/cfg/topgrade.toml",
                 "--dry-run",
+                "--log-filter",
+                "info",
                 "--only",
                 "flatpak",
                 "cargo",
             ]
+        );
+    }
+
+    #[test]
+    fn dry_run_never_pairs_with_the_damp_run_type() {
+        let argv = topgrade_argv(
+            &profile(&["flatpak"]),
+            Path::new("/cfg/topgrade.toml"),
+            true,
+        );
+        let rendered = strings(&argv);
+        assert!(!rendered.contains(&"--run-type".to_string()));
+        assert!(!rendered.contains(&"damp".to_string()));
+    }
+
+    #[test]
+    fn real_runs_print_each_command_as_it_executes() {
+        let argv = topgrade_argv(
+            &profile(&["flatpak"]),
+            Path::new("/cfg/topgrade.toml"),
+            false,
+        );
+        let rendered = strings(&argv);
+        assert!(!rendered.contains(&"--dry-run".to_string()));
+        let damp = rendered.iter().position(|arg| arg == "--run-type").unwrap();
+        assert_eq!(rendered[damp + 1], "damp");
+        assert!(rendered.contains(&"--log-filter".to_string()));
+        assert_eq!(
+            rendered[rendered
+                .iter()
+                .position(|arg| arg == "--log-filter")
+                .unwrap()
+                + 1],
+            "info"
         );
     }
 

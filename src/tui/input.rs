@@ -59,6 +59,11 @@ impl FilterState {
         self.active = true;
     }
 
+    pub fn clear_query(&mut self) {
+        self.edit = LineEdit::new(String::new());
+        self.active = false;
+    }
+
     pub fn handle(&mut self, key: KeyEvent) -> FilterAction {
         match key.code {
             KeyCode::Enter => {
@@ -88,6 +93,39 @@ pub enum FilterAction {
     Changed,
     Committed,
     Cleared,
+}
+
+pub enum FilterableAction {
+    Navigated,
+    Filtered,
+}
+
+pub fn handle_filter_typing(
+    filter: &mut FilterState,
+    key: KeyEvent,
+    index: &mut usize,
+    len: usize,
+    stride: usize,
+) -> FilterableAction {
+    let stride = stride.max(1);
+    match key.code {
+        KeyCode::Up => {
+            *index = index.saturating_sub(stride);
+            FilterableAction::Navigated
+        }
+        KeyCode::Down => {
+            *index = if len == 0 {
+                0
+            } else {
+                (*index + stride).min(len - 1)
+            };
+            FilterableAction::Navigated
+        }
+        _ => {
+            filter.handle(key);
+            FilterableAction::Filtered
+        }
+    }
 }
 
 #[cfg(test)]
@@ -148,5 +186,55 @@ mod tests {
         ));
         assert_eq!(filter.text(), "");
         assert!(filter.matches("cargo"));
+    }
+
+    #[test]
+    fn clear_query_drops_the_match_and_leaves_edit_mode() {
+        let mut filter = FilterState::new();
+        filter.start();
+        filter.edit.value = "ca".to_string();
+        filter.clear_query();
+        assert!(!filter.is_engaged());
+        assert!(filter.matches("anything"));
+    }
+
+    #[test]
+    fn filter_typing_navigates_with_the_list_stride() {
+        let mut filter = FilterState::new();
+        filter.start();
+        let mut index = 0usize;
+
+        assert!(matches!(
+            handle_filter_typing(&mut filter, key(KeyCode::Down), &mut index, 10, 3),
+            FilterableAction::Navigated
+        ));
+        assert_eq!(index, 3, "down moves by the stride");
+        handle_filter_typing(&mut filter, key(KeyCode::Up), &mut index, 10, 3);
+        assert_eq!(index, 0, "up saturates at the top");
+
+        handle_filter_typing(&mut filter, key(KeyCode::Down), &mut index, 10, 1);
+        assert_eq!(index, 1, "a linear list uses stride 1");
+        handle_filter_typing(&mut filter, key(KeyCode::Down), &mut index, 5, 3);
+        assert_eq!(index, 4, "down clamps to the last surviving row");
+        handle_filter_typing(&mut filter, key(KeyCode::Down), &mut index, 0, 3);
+        assert_eq!(index, 0, "an empty list keeps the index at zero");
+    }
+
+    #[test]
+    fn filter_typing_edits_the_query_for_everything_else() {
+        let mut filter = FilterState::new();
+        filter.start();
+        let mut index = 2usize;
+        assert!(matches!(
+            handle_filter_typing(&mut filter, key(KeyCode::Char('f')), &mut index, 10, 3),
+            FilterableAction::Filtered
+        ));
+        assert_eq!(filter.text(), "f");
+        assert_eq!(index, 2, "plain keys never move the selection");
+        assert!(matches!(
+            handle_filter_typing(&mut filter, key(KeyCode::Enter), &mut index, 10, 3),
+            FilterableAction::Filtered
+        ));
+        assert!(!filter.active);
     }
 }

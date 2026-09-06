@@ -250,7 +250,7 @@ impl EditorState {
             return EditorEvent::Cancel;
         }
         if key.code == KeyCode::Esc && self.steps_filter.is_engaged() {
-            self.steps_filter = FilterState::new();
+            self.steps_filter.clear_query();
             self.clamp_steps_selection();
             return EditorEvent::None;
         }
@@ -345,14 +345,15 @@ impl EditorState {
 
     fn handle_steps_key(&mut self, key: KeyEvent) -> EditorEvent {
         if self.steps_filter.active {
-            match key.code {
-                KeyCode::Up => self.move_steps_selection(-1),
-                KeyCode::Down => self.move_steps_selection(1),
-                _ => {
-                    self.steps_filter.handle(key);
-                    self.clamp_steps_selection();
-                }
-            }
+            let len = self.filtered_steps().len();
+            super::input::handle_filter_typing(
+                &mut self.steps_filter,
+                key,
+                &mut self.list_index,
+                len,
+                self.steps_columns,
+            );
+            self.clamp_steps_selection();
             return EditorEvent::None;
         }
         match key.code {

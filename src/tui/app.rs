@@ -16,7 +16,7 @@ use crate::systemd::{RealSystemdCtl, SystemdCtl, sync as systemd_sync};
 use super::View;
 use super::dashboard;
 use super::editor;
-use super::input::{FilterState, LineEdit};
+use super::input::{self, FilterState};
 use super::logs;
 use super::overlay::{Overlay, OverlayAction};
 use super::presets;
@@ -533,22 +533,9 @@ impl App {
 
     fn handle_dashboard_key(&mut self, key: KeyEvent) {
         if self.filter.active {
-            match key.code {
-                KeyCode::Up => {
-                    self.selected = self.selected.saturating_sub(1);
-                    self.clamp_selection();
-                }
-                KeyCode::Down => {
-                    if self.selected + 1 < self.visible_rows().len() {
-                        self.selected += 1;
-                    }
-                    self.clamp_selection();
-                }
-                _ => {
-                    self.filter.handle(key);
-                    self.clamp_selection();
-                }
-            }
+            let len = self.visible_rows().len();
+            input::handle_filter_typing(&mut self.filter, key, &mut self.selected, len, 1);
+            self.clamp_selection();
             return;
         }
         match key.code {
@@ -567,7 +554,7 @@ impl App {
                 if self.activity_panel {
                     self.activity_panel = false;
                 } else if self.filter.is_engaged() {
-                    self.filter.edit = LineEdit::new(String::new());
+                    self.filter.clear_query();
                     self.clamp_selection();
                 }
             }

@@ -358,7 +358,14 @@ fn cmd_run(name: &str, dry_run: bool) -> anyhow::Result<()> {
             None => Box::new(topmatic::runner::notify::NullNotify),
         };
 
-    let outcome = topmatic::runner::run(&profile, &topgrade_bin, &paths, notify.as_ref(), dry_run)?;
+    let outcome = topmatic::runner::run(
+        &profile,
+        &topgrade_bin,
+        &paths,
+        notify.as_ref(),
+        dry_run,
+        false,
+    )?;
     if outcome.skipped {
         eprintln!("another run of {name:?} is already in progress");
         return Ok(());

@@ -112,6 +112,7 @@ fn successful_run_records_argv_logs_and_status() {
         &fixture.paths,
         &NullNotify,
         false,
+        false,
     )
     .unwrap();
 
@@ -151,6 +152,7 @@ fn topgrade_config_file_is_written_and_isolated() {
         &fixture.paths,
         &NullNotify,
         false,
+        false,
     )
     .unwrap();
 
@@ -171,6 +173,7 @@ fn dry_run_flag_is_forwarded() {
         &fixture.paths,
         &NullNotify,
         true,
+        false,
     )
     .unwrap();
 
@@ -194,6 +197,7 @@ fn failing_run_notifies_according_to_policy() {
         &fixture.paths,
         &notify,
         false,
+        false,
     )
     .unwrap();
     assert!(!outcome.success);
@@ -207,6 +211,7 @@ fn failing_run_notifies_according_to_policy() {
         &topgrade,
         &fixture.paths,
         &notify,
+        false,
         false,
     )
     .unwrap();
@@ -240,6 +245,7 @@ fn run_is_skipped_when_lock_is_already_held() {
         &topgrade,
         &fixture.paths,
         &NullNotify,
+        false,
         false,
     )
     .unwrap();

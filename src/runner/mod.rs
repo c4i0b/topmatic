@@ -35,6 +35,7 @@ pub fn run(
     paths: &Paths,
     notify: &dyn NotifyBackend,
     dry_run: bool,
+    quiet: bool,
 ) -> anyhow::Result<RunOutcome> {
     fs::create_dir_all(&paths.config_dir)?;
     fs::create_dir_all(paths.state_dir.join("status"))?;
@@ -54,7 +55,15 @@ pub fn run(
     let mut lock = fd_lock::RwLock::new(lock_file);
 
     let outcome = match lock.try_write() {
-        Ok(_guard) => execute(profile, topgrade_bin, paths, dry_run, started, &log_path),
+        Ok(_guard) => execute(
+            profile,
+            topgrade_bin,
+            paths,
+            dry_run,
+            started,
+            &log_path,
+            quiet,
+        ),
         Err(_) => RunOutcome {
             profile: profile.name.clone(),
             dry_run,
@@ -97,6 +106,7 @@ fn execute(
     dry_run: bool,
     started: DateTime<Utc>,
     log_path: &Path,
+    quiet: bool,
 ) -> RunOutcome {
     let argv = topgrade_argv(profile, &paths.topgrade_config_file(), dry_run);
     let mut command = Command::new(topgrade_bin);
@@ -125,15 +135,17 @@ fn execute(
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
 
+    let stdout_terminal = io::stdout();
+    let stderr_terminal = io::stdout();
     let out_handle = std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
-        let mut writer = Tee(BufWriter::new(log_out), io::stdout().lock());
+        let mut writer = Writer::new(BufWriter::new(log_out), stdout_terminal, !quiet);
         let _ = io::copy(&mut reader, &mut writer);
         let _ = writer.flush();
     });
     let err_handle = std::thread::spawn(move || {
         let mut reader = BufReader::new(stderr);
-        let mut writer = Tee(BufWriter::new(log_err), io::stderr().lock());
+        let mut writer = Writer::new(BufWriter::new(log_err), stderr_terminal, !quiet);
         let _ = io::copy(&mut reader, &mut writer);
         let _ = writer.flush();
     });
@@ -202,17 +214,86 @@ pub fn read_status(paths: &Paths, profile: &str) -> anyhow::Result<Option<RunOut
     Ok(Some(serde_json::from_str(&fs::read_to_string(path)?)?))
 }
 
-struct Tee<A: Write, B: Write>(A, B);
+struct Writer<A: Write, B: Write> {
+    out: A,
+    terminal: B,
+    tee: bool,
+}
 
-impl<A: Write, B: Write> Write for Tee<A, B> {
+impl<A: Write, B: Write> Writer<A, B> {
+    fn new(out: A, terminal: B, tee: bool) -> Self {
+        Self { out, terminal, tee }
+    }
+}
+
+impl<A: Write, B: Write> Write for Writer<A, B> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write_all(buf)?;
-        self.1.write_all(buf)?;
+        self.out.write_all(buf)?;
+        if self.tee {
+            self.terminal.write_all(buf)?;
+            self.terminal.flush()?;
+        }
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()?;
-        self.1.flush()
+        self.out.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn writer(tee: bool) -> (Writer<BufWriter<std::fs::File>, Vec<u8>>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("capture.log");
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&log)
+            .unwrap();
+        (Writer::new(BufWriter::new(file), Vec::new(), tee), dir)
+    }
+
+    #[test]
+    fn quiet_writer_logs_but_never_reaches_the_terminal() {
+        let (mut writer, dir) = writer(false);
+        writer.write_all(b"topgrade output\n").unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+
+        let log = dir.path().join("capture.log");
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "topgrade output\n",
+            "quiet mode must still persist the full log"
+        );
+    }
+
+    #[test]
+    fn quiet_writer_keeps_the_terminal_buffer_empty() {
+        let (mut writer, _dir) = writer(false);
+        writer.write_all(b"topgrade output\n").unwrap();
+        writer.flush().unwrap();
+        assert!(
+            writer.terminal.is_empty(),
+            "quiet mode must not push a single byte toward the TUI's stdout"
+        );
+    }
+
+    #[test]
+    fn loud_writer_tees_log_and_terminal() {
+        let (mut writer, dir) = writer(true);
+        writer.write_all(b"topgrade output\n").unwrap();
+        writer.flush().unwrap();
+
+        assert_eq!(writer.terminal, b"topgrade output\n".to_vec());
+        drop(writer);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("capture.log")).unwrap(),
+            "topgrade output\n"
+        );
     }
 }

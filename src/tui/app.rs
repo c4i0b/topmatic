@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use ratatui::layout::Rect;
 
@@ -450,6 +450,12 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Char('c' | 'C'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            self.should_quit = true;
+            return;
+        }
         if let Some((profile, mut overlay)) = self.confirm.take() {
             match overlay.handle_key(key) {
                 Some(OverlayAction::Selected(0)) => self.delete_profile(&profile),
@@ -1717,6 +1723,36 @@ mod tests {
             app.activity_scroll, 0,
             "opening the panel resets scroll to newest"
         );
+    }
+
+    #[test]
+    fn ctrl_c_quits_from_anywhere_including_active_filters() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+
+        app.handle_key(key(KeyCode::Char('/')));
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(
+            app.should_quit,
+            "ctrl+c kills even while the filter swallows plain letters"
+        );
+
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.view = View::Editor(Box::new(crate::tui::editor::EditorState::new(
+            None,
+            Vec::new(),
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        )));
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.should_quit, "ctrl+c kills from the editor");
+    }
+
+    #[test]
+    fn plain_c_without_control_types_normally() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('/')));
+        app.handle_key(key(KeyCode::Char('c')));
+        assert!(!app.should_quit);
+        assert_eq!(app.filter.text(), "c", "plain c is just a letter");
     }
 
     #[test]

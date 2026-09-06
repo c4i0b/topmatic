@@ -502,6 +502,17 @@ impl EditorState {
             SelectTarget::Preset => {
                 if popup.index < quick_choices(self.jitter_secs).len() {
                     self.schedule = quick_choices(self.jitter_secs)[popup.index].1.clone();
+                    if self.creating
+                        && let Some(name) = self.suggested_name.clone()
+                        && let Some(base) = frequency_base(&name)
+                    {
+                        let suffix = match &self.schedule.preset {
+                            SchedulePreset::Weekly { .. } => "-weekly",
+                            SchedulePreset::EveryNHours { .. } => "-6h",
+                            _ => "-daily",
+                        };
+                        self.suggested_name = Some(format!("{base}{suffix}"));
+                    }
                 } else {
                     let calendar = if self.custom.value.trim().is_empty() {
                         match &self.schedule.preset {
@@ -524,6 +535,12 @@ impl EditorState {
         }
         self.clamp_schedule_cursor();
     }
+}
+
+fn frequency_base(name: &str) -> Option<String> {
+    ["-daily", "-weekly", "-6h"]
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix).map(str::to_string))
 }
 
 fn next_section(section: Section) -> Section {
@@ -573,6 +590,44 @@ mod tests {
             scope: Scope::User,
         };
         EditorState::new(Some(&profile), catalog_entries(), DEFAULT_RANDOM_DELAY_SEC)
+    }
+
+    #[test]
+    fn suggested_name_follows_the_chosen_frequency() {
+        let mut editor = EditorState::from_preset(
+            catalog_entries(),
+            vec!["flatpak".to_string()],
+            "all-daily",
+            DEFAULT_RANDOM_DELAY_SEC,
+        );
+        editor.section = Section::Schedule;
+
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Down));
+        editor.handle_key(key(KeyCode::Enter));
+        assert_eq!(editor.suggested_name.as_deref(), Some("all-weekly"));
+
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Down));
+        editor.handle_key(key(KeyCode::Enter));
+        assert_eq!(editor.suggested_name.as_deref(), Some("all-6h"));
+
+        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(key(KeyCode::Up));
+        editor.handle_key(key(KeyCode::Up));
+        editor.handle_key(key(KeyCode::Enter));
+        assert_eq!(editor.suggested_name.as_deref(), Some("all-daily"));
+
+        let mut editing = editing_editor();
+        editing.section = Section::Schedule;
+        editing.handle_key(key(KeyCode::Enter));
+        editing.handle_key(key(KeyCode::Down));
+        editing.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            editing.original_name.as_deref(),
+            Some("all-daily"),
+            "editing keeps the profile name untouched"
+        );
     }
 
     #[test]

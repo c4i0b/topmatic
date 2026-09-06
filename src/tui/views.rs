@@ -404,7 +404,7 @@ pub(crate) fn editor_help() -> Vec<Line<'static>> {
             keys: &[
                 (
                     "save row → enter",
-                    "type a name, then Confirm on the summary",
+                    "type a name; enter saves and returns home",
                 ),
                 ("esc", "cancel a popup, the editor, or this help"),
                 ("q", "quit topmatic"),
@@ -517,7 +517,7 @@ mod tests {
         for action in [
             "switch section",
             "filter the steps list",
-            "Confirm on the summary",
+            "enter saves and returns home",
         ] {
             assert!(text.contains(action), "missing {action:?}:\n{text}");
         }

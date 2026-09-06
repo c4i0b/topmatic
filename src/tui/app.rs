@@ -914,7 +914,6 @@ mod tests {
             app.handle_key(key(KeyCode::Char(character)));
         }
         app.handle_key(key(KeyCode::Enter));
-        app.handle_key(key(KeyCode::Enter));
     }
 
     fn settle(app: &mut App) {
@@ -1028,10 +1027,6 @@ mod tests {
                 assert!(
                     state.name_popup.is_some(),
                     "a colliding save reopens the name popup so the user can fix the name in place"
-                );
-                assert!(
-                    state.summary.is_none(),
-                    "the save summary must be dismissed when the name popup reopens"
                 );
             }
             _ => panic!("the user stays on the creation screen, not the dashboard"),

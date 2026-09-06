@@ -8,7 +8,6 @@ use crate::domain::schedule::{Schedule, SchedulePreset, Weekday, quick_choices};
 use crate::systemd::validate_on_calendar;
 
 use super::input::{FilterState, LineEdit};
-use super::overlay::{Overlay, OverlayAction};
 use popup::{RowEditor, RowEditorEvent, SelectTarget};
 
 pub mod popup;
@@ -63,7 +62,6 @@ pub struct EditorState {
     pub suggested_name: Option<String>,
     pub name_popup: Option<LineEdit>,
     pub confirmed_name: Option<String>,
-    pub summary: Option<Overlay>,
     pub row_editor: Option<RowEditor>,
     pub steps_filter: FilterState,
     pub steps_scroll: usize,
@@ -102,7 +100,6 @@ impl EditorState {
                     suggested_name: None,
                     name_popup: None,
                     confirmed_name: None,
-                    summary: None,
                     row_editor: None,
                     steps_filter: FilterState::new(),
                     steps_scroll: 0,
@@ -123,7 +120,6 @@ impl EditorState {
                 suggested_name: None,
                 name_popup: None,
                 confirmed_name: None,
-                summary: None,
                 row_editor: None,
                 steps_filter: FilterState::new(),
                 steps_scroll: 0,
@@ -216,13 +212,6 @@ impl EditorState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> EditorEvent {
-        if let Some(mut summary) = self.summary.take() {
-            match summary.handle_key(key) {
-                Some(OverlayAction::Selected(0)) => return EditorEvent::RequestSave,
-                Some(OverlayAction::Selected(_)) | Some(OverlayAction::Cancelled) | None => {}
-            }
-            return EditorEvent::None;
-        }
         if self.name_popup.is_some() {
             return self.handle_popup_key(key);
         }
@@ -272,9 +261,10 @@ impl EditorState {
                 if sanitize_name(&self.final_name()).is_ok() {
                     self.confirmed_name = Some(self.final_name());
                     self.name_popup = None;
-                    self.summary = Some(self.build_summary());
+                    EditorEvent::RequestSave
+                } else {
+                    EditorEvent::None
                 }
-                EditorEvent::None
             }
             _ => {
                 if let Some(popup) = self.name_popup.as_mut() {
@@ -297,39 +287,6 @@ impl EditorState {
         EditorEvent::None
     }
 
-    fn build_summary(&self) -> Overlay {
-        let preview = self
-            .selected_steps
-            .iter()
-            .take(4)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        let extra = self.selected_steps.len().saturating_sub(4);
-        let steps = if extra > 0 {
-            format!("{} selected ({preview} …)", self.selected_steps.len())
-        } else {
-            format!("{} selected ({preview})", self.selected_steps.len())
-        };
-        Overlay::new(
-            "save profile",
-            vec![
-                format!("name    {}", self.final_name()),
-                format!("steps   {steps}"),
-                format!(
-                    "runs    {} at midnight",
-                    render::preset_label(&self.schedule.preset)
-                ),
-                format!("notify  {}", render::notify_label(self.notify)),
-            ]
-            .into_iter()
-            .map(ratatui::text::Line::from)
-            .collect(),
-            &["Confirm", "Cancel"],
-            0,
-        )
-    }
-
     fn open_name_popup(&mut self) {
         let prefill = if self.creating {
             self.suggested_name.clone().unwrap_or_default()
@@ -340,7 +297,6 @@ impl EditorState {
     }
 
     pub fn reopen_name_popup(&mut self) {
-        self.summary = None;
         self.name_popup = Some(LineEdit::new(
             self.confirmed_name.clone().unwrap_or_default(),
         ));
@@ -628,43 +584,39 @@ mod tests {
     }
 
     #[test]
-    fn save_flow_shows_summary_overlay_before_saving() {
+    fn save_flow_confirms_name_on_the_single_enter() {
         let mut editor = editing_editor();
         editor.section = Section::Save;
         editor.handle_key(key(KeyCode::Enter));
         assert!(editor.name_popup.is_some());
-        editor.handle_key(key(KeyCode::Enter));
-        let summary = editor.summary.as_ref().expect("summary overlay opens");
-        assert_eq!(
-            summary.options,
-            vec!["Confirm".to_string(), "Cancel".to_string()]
-        );
-        assert_eq!(summary.selected, 0, "cursor starts on Confirm");
-        assert!(summary.title.contains("save profile"));
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
             EditorEvent::RequestSave
         );
-        assert!(editor.summary.is_none(), "confirm closes the overlay");
+        assert!(editor.name_popup.is_none(), "name popup closes on save");
+        assert_eq!(
+            editor.confirmed_name.as_deref(),
+            Some("all-daily"),
+            "the confirmed name is kept for saving"
+        );
     }
 
     #[test]
-    fn summary_overlay_esc_and_cancel_stay_in_the_editor() {
+    fn name_popup_esc_and_invalid_name_stay_in_the_editor() {
         let mut editor = editing_editor();
         editor.section = Section::Save;
         editor.handle_key(key(KeyCode::Enter));
-        editor.handle_key(key(KeyCode::Enter));
-        assert!(editor.summary.is_some());
-
         assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::None);
-        assert!(editor.summary.is_none());
+        assert!(editor.name_popup.is_none(), "Esc closes the name popup");
         assert!(matches!(editor.section, Section::Save));
 
         editor.handle_key(key(KeyCode::Enter));
-        editor.handle_key(key(KeyCode::Enter));
-        editor.handle_key(key(KeyCode::Down));
-        editor.handle_key(key(KeyCode::Enter));
-        assert!(editor.summary.is_none(), "Cancel also just closes");
+        editor.name_popup = Some(LineEdit::new("bad name".to_string()));
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Enter)),
+            EditorEvent::None,
+            "an invalid name does not save"
+        );
         assert_eq!(
             editor.handle_key(key(KeyCode::Char('q'))),
             EditorEvent::None
@@ -672,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn summary_lists_what_will_be_saved() {
+    fn confirming_the_name_keeps_the_drafted_values_for_saving() {
         let mut editor = EditorState::from_preset(
             catalog_entries(),
             vec!["cargo".to_string(), "flatpak".to_string()],
@@ -688,23 +640,10 @@ mod tests {
         editor.section = Section::Save;
         editor.handle_key(key(KeyCode::Enter));
         editor.handle_key(key(KeyCode::Enter));
-        let text: String = editor
-            .summary
-            .as_ref()
-            .unwrap()
-            .lines
-            .iter()
-            .map(|line| {
-                line.iter()
-                    .map(|span| span.content.clone())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(text.contains("name    all-weekly"));
-        assert!(text.contains("steps   2 selected (cargo, flatpak)"));
-        assert!(text.contains("runs    weekly Mon at midnight"));
-        assert!(text.contains("notify  on failure"));
+        assert_eq!(editor.confirmed_name.as_deref(), Some("all-weekly"));
+        let profile = editor.to_profile("all-weekly").unwrap();
+        assert_eq!(profile.steps, vec!["cargo", "flatpak"]);
+        assert_eq!(editor.notify, NotifyPolicy::OnFailure);
     }
 
     #[test]
@@ -779,10 +718,10 @@ mod tests {
         assert_eq!(editor.section, Section::Save);
         editor.handle_key(key(KeyCode::Enter));
         assert_eq!(editor.final_name(), "all-daily");
-        editor.handle_key(key(KeyCode::Enter));
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
-            EditorEvent::RequestSave
+            EditorEvent::RequestSave,
+            "the single name Enter saves immediately"
         );
 
         let saved = editor.to_profile(&editor.final_name()).unwrap();
@@ -1072,11 +1011,15 @@ mod tests {
         editor.section = Section::Save;
         editor.handle_key(key(KeyCode::Enter));
         assert_eq!(editor.final_name(), "all-daily");
-        editor.handle_key(key(KeyCode::Enter));
-        assert!(editor.summary.is_some(), "name Enter opens the summary");
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
-            EditorEvent::RequestSave
+            EditorEvent::RequestSave,
+            "the single name Enter saves immediately"
+        );
+        assert_eq!(
+            editor.confirmed_name.as_deref(),
+            Some("all-daily"),
+            "the prefilled current name is confirmed"
         );
     }
 

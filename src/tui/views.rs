@@ -374,6 +374,10 @@ pub(crate) fn dashboard_help() -> Vec<Line<'static>> {
         Style::new().fg(Color::DarkGray),
     )));
     lines.push(Line::from(Span::styled(
+        "• linger — user timers survive logout",
+        Style::new().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
         "• linger — loginctl enable/disable-linger",
         Style::new().fg(Color::DarkGray),
     )));
@@ -549,6 +553,10 @@ mod tests {
         assert!(
             text.contains("loginctl enable/disable-linger"),
             "help must say how to control linger:\n{text}"
+        );
+        assert!(
+            text.contains("user timers survive logout"),
+            "help must say what linger is for:\n{text}"
         );
     }
 

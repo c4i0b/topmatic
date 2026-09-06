@@ -198,9 +198,7 @@ pub(crate) fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         Line::from("n  new profile (presets)      e  edit profile      d  delete profile"),
         Line::from("r  run now (systemd runs it in the background)"),
-        Line::from(
-            "l  browse run logs            g  enable lingering (user units keep running when you log out)",
-        ),
+        Line::from("l  browse run logs"),
         Line::from("/  filter profiles                     ?  this help"),
         Line::from(""),
         Line::from("editor: tab switches section, enter acts on the highlighted row,"),

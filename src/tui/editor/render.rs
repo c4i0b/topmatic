@@ -92,10 +92,6 @@ impl EditorState {
         )));
 
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "─".repeat(20),
-            Style::new().fg(Color::DarkGray),
-        )));
         lines.push(Line::from(format!(
             "{}{}",
             if self.section == Section::Save {

@@ -195,7 +195,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
         None => vec![Line::from("no profile selected")],
     };
     let paragraph = Paragraph::new(detail)
-        .block(Block::bordered().title("detail"))
+        .block(Block::bordered().title("Details"))
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(paragraph, detail_area);
 
@@ -323,7 +323,7 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let paragraph = Paragraph::new(detail_lines(&profile, &row, None))
-                    .block(Block::bordered().title("detail"))
+                    .block(Block::bordered().title("Details"))
                     .wrap(Wrap { trim: true });
                 frame.render_widget(paragraph, area);
             })

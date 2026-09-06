@@ -147,10 +147,7 @@ pub fn render(state: &LogsState, frame: &mut Frame, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .block(Block::bordered().title(format!(
-            "runs of {} (Enter: open, r: refresh, Esc: back)",
-            state.profile
-        )))
+        .block(Block::bordered().title(format!("runs of {}", state.profile)))
         .style(Style::new().fg(Color::Cyan));
     frame.render_widget(list, area);
 }

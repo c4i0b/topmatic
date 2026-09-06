@@ -52,6 +52,14 @@ New profiles start from a preset — everything user-level, dev tools or Flatpak
 
 ![editor](docs/assets/editor.png)
 
+Press `?` anywhere for the full key map and what lingering means:
+
+![help](docs/assets/help.png)
+
+Every run leaves a log you can browse with `l`:
+
+![logs](docs/assets/logs.png)
+
 Profiles live in `~/.config/topmatic/config.toml` — edit it by hand or via TUI, both are first-class; topmatic reconciles systemd to match it on every start. A `[defaults]` table tunes the run behavior for every profile (`retries`, `retry_delay`, `give_up_after`, `network_wait`, `random_delay` as `2min`-style values); `config.example.toml`, regenerated next to it, documents every key with the current defaults.
 
 ### Schedules as dotfiles

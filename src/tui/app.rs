@@ -440,6 +440,7 @@ mod tests {
     use crate::domain::profile::{NotifyPolicy, Profile, Scope};
     use crate::domain::schedule::Schedule;
     use crate::systemd::test_support::FakeCtl;
+    use crate::tui::views;
     use std::sync::Arc;
 
     struct Harness {
@@ -528,6 +529,54 @@ mod tests {
                 .join("topmatic@all-daily.timer.d/10-schedule.conf")
                 .is_file()
         );
+    }
+
+    #[test]
+    fn dump_views_at_screenshot_grid() {
+        let (mut app, _harness) = harness(&[profile("all-daily"), profile("dev-tools")]);
+        app.catalog = presets::fallback_catalog();
+        let views: [(&str, View); 6] = [
+            ("dashboard", View::Dashboard),
+            ("picker", View::PresetPicker { index: 0 }),
+            (
+                "editor",
+                View::Editor(Box::new(editor::EditorState::from_preset(
+                    app.catalog.clone(),
+                    vec!["cargo".to_string(), "flatpak".to_string()],
+                    "all-daily",
+                    crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+                ))),
+            ),
+            ("help", View::Help),
+            (
+                "confirm",
+                View::Confirm {
+                    profile: "all-daily".to_string(),
+                },
+            ),
+            (
+                "logs",
+                View::Logs(super::logs::LogsState::open(&app.paths, "all-daily")),
+            ),
+        ];
+        for (name, view) in views {
+            app.view = view;
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(119, 27)).unwrap();
+            terminal.draw(|frame| views::draw(&app, frame)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            println!("=== {name} ===");
+            for y in 0..buffer.area.height {
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect();
+                if row.trim().is_empty() {
+                    println!("{y:2}|");
+                } else {
+                    println!("{y:2}|{}", row.trim_end());
+                }
+            }
+        }
     }
 
     #[test]

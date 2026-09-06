@@ -23,7 +23,6 @@ pub enum View {
     PresetPicker { index: usize },
     Editor(Box<editor::EditorState>),
     Logs(logs::LogsState),
-    Help,
 }
 
 pub fn run() -> anyhow::Result<()> {

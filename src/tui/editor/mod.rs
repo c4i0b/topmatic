@@ -83,6 +83,7 @@ pub enum EditorEvent {
     Cancel,
     RequestSave,
     Quit,
+    Help,
 }
 
 impl EditorState {
@@ -227,6 +228,9 @@ impl EditorState {
         }
         if self.row_editor.is_some() {
             return self.handle_row_editor_key(key);
+        }
+        if key.code == KeyCode::Char('?') && !self.steps_filter.is_engaged() {
+            return EditorEvent::Help;
         }
         if key.code == KeyCode::Esc && !self.steps_filter.is_engaged() {
             return EditorEvent::Cancel;

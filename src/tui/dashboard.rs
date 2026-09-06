@@ -10,6 +10,14 @@ use crate::runner::RunOutcome;
 
 use super::App;
 
+#[derive(Debug, Clone, Default)]
+pub struct LiveSnapshot {
+    pub name: String,
+    pub running: bool,
+    pub running_since: Option<DateTime<Utc>>,
+    pub status: Option<RunOutcome>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProfileRow {
     pub name: String,

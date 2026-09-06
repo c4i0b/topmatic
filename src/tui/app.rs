@@ -17,6 +17,7 @@ use super::input::{FilterState, LineEdit};
 use super::logs;
 use super::overlay::{Overlay, OverlayAction};
 use super::presets;
+use super::views;
 
 const MESSAGE_TTL_TICKS: u64 = 25;
 
@@ -36,7 +37,11 @@ pub struct App {
     pub message: String,
     pub seen_message: String,
     pub message_expires_at_tick: u64,
+    pub last_action: String,
+    pub seen_last_action: String,
+    pub last_action_expires_at_tick: u64,
     pub confirm: Option<(String, Overlay)>,
+    pub help: Option<Overlay>,
     pub should_quit: bool,
     pub tick: u64,
 }
@@ -83,49 +88,54 @@ impl App {
             message: String::new(),
             seen_message: String::new(),
             message_expires_at_tick: 0,
+            last_action: String::new(),
+            seen_last_action: String::new(),
+            last_action_expires_at_tick: 0,
             confirm: None,
+            help: None,
             should_quit: false,
             tick: 0,
         };
         let report = systemd_sync::sync(&app.config, &app.topmatic_bin, app.ctl.as_ref());
-        app.message = if report.errors.is_empty() {
-            format!(
-                "synced{}{}{}{}",
-                if report.templates_installed {
-                    ", installed unit templates"
-                } else {
-                    ""
-                },
-                if report.pruned_drop_ins.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        ", pruned {} stray drop-in file(s)",
-                        report.pruned_drop_ins.len()
-                    )
-                },
-                if report.removed_orphans.is_empty() {
-                    String::new()
-                } else {
-                    format!(", removed {} orphan(s)", report.removed_orphans.len())
-                },
-                if report.ignored_foreign.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        ", left {} foreign timer(s) untouched",
-                        report.ignored_foreign.len()
-                    )
-                }
-            )
-        } else {
+        app.message = if !report.errors.is_empty() {
             format!("sync errors: {}", report.errors.join("; "))
+        } else {
+            String::new()
         };
+        app.set_last_action(format!(
+            "synced{}{}{}{}",
+            if report.templates_installed {
+                ", installed unit templates"
+            } else {
+                ""
+            },
+            if report.pruned_drop_ins.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ", pruned {} stray drop-in file(s)",
+                    report.pruned_drop_ins.len()
+                )
+            },
+            if report.removed_orphans.is_empty() {
+                String::new()
+            } else {
+                format!(", removed {} orphan(s)", report.removed_orphans.len())
+            },
+            if report.ignored_foreign.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ", left {} foreign timer(s) untouched",
+                    report.ignored_foreign.len()
+                )
+            }
+        ));
         if !issues.is_empty() {
             app.message = format!(
                 "skipped {} invalid profile(s); run topmatic doctor — {}",
                 issues.len(),
-                app.message
+                app.last_action
             );
         }
         if app.topgrade_bin.is_none() {
@@ -147,25 +157,38 @@ impl App {
         presets::fallback_catalog()
     }
 
+    pub fn live_snapshot(&self, name: &str) -> dashboard::LiveSnapshot {
+        dashboard::LiveSnapshot {
+            name: name.to_string(),
+            running: self.ctl.service_active(name),
+            running_since: self.ctl.service_since(name),
+            status: read_status(&self.paths, name).ok().flatten(),
+        }
+    }
+
     pub fn rebuild_rows(&mut self) {
         self.rows = self
             .config
             .profiles
             .iter()
             .map(|profile| {
-                let name = &profile.name;
+                let snap = self.live_snapshot(&profile.name);
                 dashboard::ProfileRow {
-                    name: name.clone(),
+                    name: snap.name.clone(),
                     schedule: profile.schedule.summary(),
-                    next_run: self.ctl.next_run(name),
-                    status: read_status(&self.paths, name).ok().flatten(),
-                    timer_active: self.ctl.timer_active(name),
-                    running: self.ctl.service_active(name),
-                    running_since: self.ctl.service_since(name),
+                    next_run: self.ctl.next_run(&profile.name),
+                    status: snap.status,
+                    timer_active: self.ctl.timer_active(&profile.name),
+                    running: snap.running,
+                    running_since: snap.running_since,
                 }
             })
             .collect();
         self.clamp_selection();
+    }
+
+    pub fn set_last_action(&mut self, action: impl Into<String>) {
+        self.last_action = action.into();
     }
 
     pub fn on_tick(&mut self) {
@@ -176,6 +199,13 @@ impl App {
             self.message.clear();
             self.seen_message.clear();
         }
+        if self.last_action != self.seen_last_action {
+            self.seen_last_action = self.last_action.clone();
+            self.last_action_expires_at_tick = self.tick + MESSAGE_TTL_TICKS;
+        } else if !self.last_action.is_empty() && self.tick >= self.last_action_expires_at_tick {
+            self.last_action.clear();
+            self.seen_last_action.clear();
+        }
         self.tick = self.tick.wrapping_add(1);
         let follow_open = matches!(&self.view, View::Logs(state) if state.follow);
         let any_running = self.rows.iter().any(|row| row.running);
@@ -185,52 +215,53 @@ impl App {
     }
 
     fn refresh_live_state(&mut self) {
-        let previous: Vec<(String, bool, Option<chrono::DateTime<chrono::Utc>>)> = self
+        let previous: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = self
             .rows
             .iter()
-            .map(|row| (row.name.clone(), row.running, row.running_since))
+            .filter(|row| row.running)
+            .map(|row| (row.name.clone(), row.running_since))
             .collect();
         self.rebuild_rows();
-        for (name, was_running, since) in previous {
-            if !was_running {
-                continue;
-            }
+        for (name, since) in previous {
             if self.rows.iter().any(|row| row.name == name && row.running) {
                 continue;
             }
-            let status = read_status(&self.paths, &name).ok().flatten();
-            let finished_after_start = status
-                .as_ref()
-                .is_some_and(|outcome| since.is_some_and(|start| outcome.finished_at > start));
-            self.message = match (&status, finished_after_start) {
-                (Some(outcome), true) if outcome.success => format!("{name} finished ok"),
-                (Some(outcome), true) => {
-                    format!("{name} FAILED (exit {:?})", outcome.exit_code.unwrap_or(1))
-                }
-                _ => format!("{name} stopped"),
+            let status = match self.rows.iter().find(|row| row.name == name) {
+                Some(row) => row.status.clone(),
+                None => read_status(&self.paths, &name).ok().flatten(),
             };
+            let status = status.as_ref();
+            let finished_after_start = status
+                .is_some_and(|outcome| since.is_some_and(|start| outcome.finished_at > start));
+            match (status, finished_after_start) {
+                (Some(outcome), true) if outcome.success => {
+                    self.set_last_action(format!("{name} finished ok"));
+                }
+                (Some(outcome), true) => {
+                    self.message =
+                        format!("{name} FAILED (exit {:?})", outcome.exit_code.unwrap_or(1));
+                }
+                _ => self.set_last_action(format!("{name} stopped")),
+            }
         }
         if let View::Logs(state) = &mut self.view
             && state.follow
         {
             let profile = state.profile.clone();
-            let running = self
-                .rows
-                .iter()
-                .find(|row| row.name == profile)
-                .is_some_and(|row| row.running);
-            let status = read_status(&self.paths, &profile).ok().flatten();
-            let elapsed = self
-                .rows
-                .iter()
-                .find(|row| row.name == profile)
+            let row = self.rows.iter().find(|row| row.name == profile);
+            let running = row.is_some_and(|row| row.running);
+            let status = match row.as_ref().map(|row| row.status.clone()) {
+                Some(status) => status,
+                None => read_status(&self.paths, &profile).ok().flatten(),
+            };
+            let elapsed = row
                 .and_then(|row| row.running_since)
                 .map(|since| dashboard::format_elapsed(chrono::Utc::now() - since))
                 .unwrap_or_default();
             state.follow_header = if running {
                 format!("running {profile} · {elapsed}")
             } else {
-                match status {
+                match status.as_ref() {
                     Some(outcome) if outcome.success => format!("{profile} finished ok"),
                     Some(outcome) => format!(
                         "{profile} FAILED (exit {:?})",
@@ -293,11 +324,18 @@ impl App {
             }
             return;
         }
+        if let Some(mut overlay) = self.help.take() {
+            match overlay.handle_key(key) {
+                Some(OverlayAction::Selected(_)) | Some(OverlayAction::Cancelled) => {}
+                None => self.help = Some(overlay),
+            }
+            return;
+        }
         let quits = matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'));
         let editing_dashboard_filter = matches!(self.view, View::Dashboard) && self.filter.active;
         if quits && !editing_dashboard_filter {
             match &self.view {
-                View::Dashboard | View::Help | View::Logs(_) | View::PresetPicker { .. } => {
+                View::Dashboard | View::Logs(_) | View::PresetPicker { .. } => {
                     self.should_quit = true;
                     return;
                 }
@@ -341,10 +379,14 @@ impl App {
             }
             View::Editor(mut state) => match state.handle_key(key) {
                 editor::EditorEvent::Cancel => {
-                    self.message = cancel_message(state.is_dirty());
+                    self.set_last_action(cancel_message(state.is_dirty()));
                 }
                 editor::EditorEvent::RequestSave => self.save_profile(*state),
                 editor::EditorEvent::Quit => self.should_quit = true,
+                editor::EditorEvent::Help => {
+                    self.help = Some(views::help_overlay("editor help", views::editor_help()));
+                    self.view = View::Editor(state);
+                }
                 editor::EditorEvent::None => self.view = View::Editor(state),
             },
             View::Logs(mut state) => {
@@ -360,7 +402,6 @@ impl App {
                     self.view = View::Logs(state);
                 }
             }
-            View::Help => {}
         }
     }
 
@@ -391,7 +432,9 @@ impl App {
             }
             KeyCode::Char(c) => match c.to_ascii_lowercase() {
                 '/' => self.filter.start(),
-                '?' => self.view = View::Help,
+                '?' => {
+                    self.help = Some(views::help_overlay("help", views::dashboard_help()));
+                }
                 'n' => self.view = View::PresetPicker { index: 0 },
                 'e' => self.open_editor_for_selected(),
                 'd' => {
@@ -499,7 +542,7 @@ impl App {
         if !report.errors.is_empty() {
             self.message = format!("sync errors: {}", report.errors.join("; "));
         } else {
-            self.message = format!("saved {}", profile.name);
+            self.set_last_action(format!("saved {}", profile.name));
         }
         self.rebuild_rows();
     }
@@ -511,7 +554,9 @@ impl App {
         }
         let _ = crate::systemd::sync::purge_profile_state(&self.paths, name);
         let _ = systemd_sync::sync(&self.config, &self.topmatic_bin, self.ctl.as_ref());
-        self.message = format!("deleted {name} (run history purged)");
+        self.set_last_action(format!(
+            "deleted {name} — recreate with n if that was a mistake (run history purged)"
+        ));
         self.view = View::Dashboard;
         self.selected = 0;
         self.rebuild_rows();
@@ -523,7 +568,7 @@ impl App {
         };
         match self.ctl.start_service(&name) {
             Ok(()) => {
-                self.message = format!("started {name}");
+                self.set_last_action(format!("started {name}"));
                 self.rebuild_rows();
                 self.view = View::Logs(logs::LogsState::follow(&name));
             }
@@ -533,7 +578,7 @@ impl App {
 
     fn stop_run(&mut self, profile: &str) {
         match self.ctl.stop_service(profile) {
-            Ok(()) => self.message = format!("stopping {profile}…"),
+            Ok(()) => self.set_last_action(format!("stopping {profile}…")),
             Err(error) => self.message = format!("stop failed: {error}"),
         }
     }
@@ -636,7 +681,7 @@ mod tests {
     #[test]
     fn assemble_syncs_timers_and_builds_rows() {
         let (app, harness) = harness(&[profile("all-daily")]);
-        assert!(app.message.contains("synced"));
+        assert!(app.last_action.contains("synced"));
         assert_eq!(app.rows.len(), 1);
         assert_eq!(app.rows[0].name, "all-daily");
         assert!(
@@ -660,7 +705,7 @@ mod tests {
     fn dump_views_at_screenshot_grid() {
         let (mut app, _harness) = harness(&[profile("all-daily"), profile("dev-tools")]);
         app.catalog = presets::fallback_catalog();
-        let views: [(&str, View); 5] = [
+        let views: [(&str, View); 4] = [
             ("dashboard", View::Dashboard),
             ("picker", View::PresetPicker { index: 0 }),
             (
@@ -672,7 +717,6 @@ mod tests {
                     crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
                 ))),
             ),
-            ("help", View::Help),
             (
                 "logs",
                 View::Logs(super::logs::LogsState::open(&app.paths, "all-daily")),
@@ -718,7 +762,7 @@ mod tests {
         assert!(matches!(app.view, View::Editor(_)));
         save_editor_profile(&mut app, "all-daily", "all-daily");
 
-        assert!(app.message.contains("saved all-daily"));
+        assert!(app.last_action.contains("saved all-daily"));
         assert!(matches!(app.view, View::Dashboard));
         let saved = crate::config::load(&app.paths).unwrap();
         assert_eq!(saved.profiles.len(), 1);
@@ -744,7 +788,7 @@ mod tests {
         assert!(matches!(app.view, View::Editor(_)));
         save_editor_profile(&mut app, "old", "new");
 
-        assert!(app.message.contains("saved new"));
+        assert!(app.last_action.contains("saved new"));
         let saved = crate::config::load(&app.paths).unwrap();
         assert!(saved.profile("new").is_some());
         assert!(saved.profile("old").is_none());
@@ -805,14 +849,21 @@ mod tests {
     }
 
     #[test]
-    fn transient_messages_expire_after_the_ttl() {
+    fn transient_feedback_expires_after_the_ttl() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
-        assert!(!app.message.is_empty());
+        assert!(app.last_action.contains("started all-daily"));
+        app.on_tick();
+        app.last_action_expires_at_tick = app.tick.saturating_sub(1);
+        app.on_tick();
+        assert!(app.last_action.is_empty(), "info feedback fades away");
+
+        app.set_last_action("boom");
+        app.message = "critical: something failed".to_string();
         app.on_tick();
         app.message_expires_at_tick = app.tick.saturating_sub(1);
         app.on_tick();
-        assert!(app.message.is_empty(), "stale feedback fades away");
+        assert!(app.message.is_empty(), "error feedback fades away too");
         drop(harness);
     }
 
@@ -832,8 +883,47 @@ mod tests {
         assert!(matches!(app.view, View::Dashboard), "logs backs out");
 
         app.handle_key(key(KeyCode::Char('?')));
-        app.handle_key(key(KeyCode::Char(' ')));
-        assert!(matches!(app.view, View::Dashboard), "help closes");
+        assert!(app.help.is_some(), "? opens the help overlay");
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.help.is_none(), "esc closes the help overlay");
+        assert!(
+            matches!(app.view, View::Dashboard),
+            "stays on the dashboard"
+        );
+    }
+
+    #[test]
+    fn editor_question_mark_opens_contextual_help_without_leaving() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.view, View::Editor(_)));
+        app.handle_key(key(KeyCode::Char('?')));
+        assert!(
+            app.help.is_some(),
+            "\"?\" in the editor opens the contextual help"
+        );
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(!app.should_quit, "q is swallowed inside the help overlay");
+        assert!(app.help.is_some(), "q does not close the help overlay");
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.help.is_none());
+        assert!(
+            matches!(app.view, View::Editor(_)),
+            "closing the help returns to the editor, not the dashboard"
+        );
+    }
+
+    #[test]
+    fn help_overlay_per_key_does_not_typo_into_editor_sections() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Char('?')));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.help.is_none(), "enter closes the help overlay");
+        assert!(
+            matches!(app.view, View::Editor(_)),
+            "enter on an open help must not open the save flow"
+        );
     }
 
     #[test]
@@ -846,7 +936,16 @@ mod tests {
         app.handle_key(key(KeyCode::Up));
         app.handle_key(key(KeyCode::Enter));
 
-        assert!(app.message.contains("deleted gone"));
+        assert!(
+            app.last_action.contains("deleted gone"),
+            "delete reports as an action: {:?}",
+            app.last_action
+        );
+        assert!(
+            app.last_action.contains("recreate with n"),
+            "delete points at the way back: {:?}",
+            app.last_action
+        );
         assert!(matches!(app.view, View::Dashboard));
         let saved = crate::config::load(&app.paths).unwrap();
         assert!(saved.profiles.is_empty());
@@ -857,7 +956,7 @@ mod tests {
     fn run_now_starts_the_service_through_the_manager() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
-        assert!(app.message.contains("started all-daily"));
+        assert!(app.last_action.contains("started all-daily"));
         assert!(
             harness
                 .calls
@@ -899,6 +998,20 @@ mod tests {
     }
 
     #[test]
+    fn live_snapshot_gathers_running_and_status_in_one_read() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        write_status(&app.paths, "all-daily", true, 0);
+
+        let snap = app.live_snapshot("all-daily");
+        assert!(snap.running);
+        assert!(snap.running_since.is_some());
+        assert!(snap.status.as_ref().is_some_and(|outcome| outcome.success));
+        assert_eq!(snap.name, "all-daily");
+        drop(harness);
+    }
+
+    #[test]
     fn live_view_backgrounds_with_escape_and_run_keeps_going() {
         let (mut app, _harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
@@ -912,7 +1025,7 @@ mod tests {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
         app.handle_key(key(KeyCode::Char('x')));
-        assert!(app.message.contains("stopping all-daily"));
+        assert!(app.last_action.contains("stopping all-daily"));
         assert!(
             harness
                 .calls
@@ -931,7 +1044,7 @@ mod tests {
         harness.services.lock().unwrap().remove("all-daily");
         write_status(&app.paths, "all-daily", true, 0);
         app.on_tick();
-        assert!(app.message.contains("all-daily finished ok"));
+        assert!(app.last_action.contains("all-daily finished ok"));
         assert!(!app.rows[0].running);
         match &app.view {
             View::Logs(state) => assert!(state.follow_header.contains("finished ok")),
@@ -955,11 +1068,11 @@ mod tests {
         app.handle_key(key(KeyCode::Char('r')));
         harness.services.lock().unwrap().remove("all-daily");
         app.on_tick();
-        let first = app.message.clone();
+        let first = app.last_action.clone();
         app.on_tick();
         app.on_tick();
         assert_eq!(
-            app.message, first,
+            app.last_action, first,
             "the transition fires once, not on every tick"
         );
     }

@@ -67,8 +67,13 @@ impl Overlay {
             };
             body.push(line);
         }
+        let hint = if self.options.is_empty() {
+            " esc closes"
+        } else {
+            " enter select · esc cancel"
+        };
         body.push(Line::from(Span::styled(
-            " enter select · esc cancel",
+            hint,
             Style::new().fg(Color::DarkGray),
         )));
         let paragraph = Paragraph::new(body).block(Block::bordered().title(self.title.clone()));
@@ -124,6 +129,28 @@ mod tests {
             "q must never quit the app from inside an overlay"
         );
         assert_eq!(overlay.selected, 1, "q does not move the cursor");
+    }
+
+    #[test]
+    fn empty_options_shows_a_read_only_close_hint() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let overlay = Overlay::new("help", vec![Line::from("a row")], &[], 0);
+        let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+        terminal
+            .draw(|frame| overlay.render(frame, frame.area()))
+            .unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(50)
+            .map(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect();
+        let visible = rows.join("\n");
+        assert!(
+            visible.contains("esc closes"),
+            "read-only overlay hint:\n{visible}"
+        );
     }
 
     #[test]

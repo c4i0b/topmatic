@@ -13,25 +13,29 @@ use popup::{RowEditor, RowEditorEvent, SelectTarget};
 pub mod popup;
 pub(crate) mod render;
 
-pub const STEPS_VISIBLE: usize = 10;
+pub const STEPS_ROWS: usize = 10;
 
-pub fn window_bounds(
+pub fn grid_window(
     index: usize,
     len: usize,
-    height: usize,
+    columns: usize,
+    rows: usize,
     scroll: &mut usize,
 ) -> (usize, usize) {
-    if height == 0 {
+    let columns = columns.max(1);
+    if rows == 0 || len == 0 {
         return (0, 0);
     }
-    if index < *scroll {
-        *scroll = index;
-    } else if index >= *scroll + height {
-        *scroll = index + 1 - height;
+    let total_rows = len.div_ceil(columns);
+    let cursor_row = index / columns;
+    if cursor_row < *scroll {
+        *scroll = cursor_row;
+    } else if cursor_row >= *scroll + rows {
+        *scroll = cursor_row + 1 - rows;
     }
-    *scroll = (*scroll).min(len.saturating_sub(height));
-    let end = (*scroll + height).min(len);
-    (*scroll, end)
+    *scroll = (*scroll).min(total_rows.saturating_sub(rows));
+    let start = *scroll * columns;
+    (start, (start + rows * columns).min(len))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +69,7 @@ pub struct EditorState {
     pub row_editor: Option<RowEditor>,
     pub steps_filter: FilterState,
     pub steps_scroll: usize,
+    pub steps_columns: usize,
     pub catalog: Vec<String>,
     pub selected_steps: BTreeSet<String>,
     pub schedule: Schedule,
@@ -103,6 +108,7 @@ impl EditorState {
                     row_editor: None,
                     steps_filter: FilterState::new(),
                     steps_scroll: 0,
+                    steps_columns: 1,
                     catalog,
                     selected_steps: profile.steps.iter().cloned().collect(),
                     schedule,
@@ -123,6 +129,7 @@ impl EditorState {
                 row_editor: None,
                 steps_filter: FilterState::new(),
                 steps_scroll: 0,
+                steps_columns: 1,
                 catalog,
                 selected_steps: BTreeSet::new(),
                 schedule: base_schedule,
@@ -156,12 +163,30 @@ impl EditorState {
 
     pub fn steps_window(&self) -> (usize, usize) {
         let mut scroll = self.steps_scroll;
-        window_bounds(
+        grid_window(
             self.list_index,
             self.filtered_steps().len(),
-            STEPS_VISIBLE,
+            self.steps_columns,
+            STEPS_ROWS,
             &mut scroll,
         )
+    }
+
+    pub fn set_steps_columns(&mut self, columns: usize) {
+        self.steps_columns = columns.max(1);
+    }
+
+    pub fn widest_step(&self) -> usize {
+        self.filtered_steps()
+            .iter()
+            .map(|step| step.chars().count())
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn steps_columns_for_width(&self, width: u16) -> usize {
+        let cell = self.widest_step() + 9;
+        ((width as usize) / cell).clamp(1, 6)
     }
 
     pub fn final_name(&self) -> String {
@@ -335,6 +360,8 @@ impl EditorState {
         match key.code {
             KeyCode::Up | KeyCode::Char('k' | 'K') => self.move_steps_selection(-1),
             KeyCode::Down | KeyCode::Char('j' | 'J') => self.move_steps_selection(1),
+            KeyCode::Left | KeyCode::Char('h' | 'H') => self.move_steps_horizontally(-1),
+            KeyCode::Right | KeyCode::Char('l' | 'L') => self.move_steps_horizontally(1),
             KeyCode::Char('/') => self.steps_filter.start(),
             KeyCode::Enter | KeyCode::Char(' ') => self.toggle_step_at(self.list_index),
             _ => {}
@@ -347,10 +374,31 @@ impl EditorState {
         if len == 0 {
             return;
         }
+        let columns = self.steps_columns.max(1) as i64;
+        let next = (self.list_index as i64 + delta * columns).clamp(0, len as i64 - 1) as usize;
+        self.list_index = next;
+        self.realign_steps_window();
+    }
+
+    fn move_steps_horizontally(&mut self, delta: i64) {
+        let len = self.filtered_steps().len();
+        if len == 0 {
+            return;
+        }
         let next = (self.list_index as i64 + delta).clamp(0, len as i64 - 1) as usize;
         self.list_index = next;
-        let (start, _) = window_bounds(self.list_index, len, STEPS_VISIBLE, &mut self.steps_scroll);
-        self.steps_scroll = start;
+        self.realign_steps_window();
+    }
+
+    fn realign_steps_window(&mut self) {
+        let len = self.filtered_steps().len();
+        grid_window(
+            self.list_index,
+            len,
+            self.steps_columns,
+            STEPS_ROWS,
+            &mut self.steps_scroll,
+        );
     }
 
     fn toggle_step_at(&mut self, index: usize) {
@@ -964,7 +1012,7 @@ mod tests {
         let mut editor = new_editor();
         editor.section = Section::Steps;
         let total = editor.filtered_steps().len();
-        assert!(total > STEPS_VISIBLE);
+        assert!(total > STEPS_ROWS);
 
         for _ in 0..total + 5 {
             editor.handle_key(key(KeyCode::Down));
@@ -981,17 +1029,95 @@ mod tests {
     }
 
     #[test]
-    fn window_bounds_follow_the_selection() {
+    fn steps_window_covers_columns_times_rows() {
+        let mut editor = new_editor();
+        editor.set_steps_columns(3);
+        let total = editor.filtered_steps().len();
+        assert!(total > STEPS_ROWS * 3);
+        assert_eq!(editor.steps_window(), (0, STEPS_ROWS * 3));
+
+        for _ in 0..STEPS_ROWS {
+            editor.handle_key(key(KeyCode::Down));
+        }
+        assert_eq!(editor.list_index, STEPS_ROWS * 3);
+        assert_eq!(
+            editor.steps_window(),
+            (3, 3 + STEPS_ROWS * 3),
+            "crossing the bottom scrolls the grid by one row"
+        );
+    }
+
+    #[test]
+    fn vertical_movement_steps_by_columns() {
+        let mut editor = new_editor();
+        editor.set_steps_columns(3);
+        editor.section = Section::Steps;
+        editor.handle_key(key(KeyCode::Down));
+        assert_eq!(editor.list_index, 3, "down moves one grid row");
+        editor.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(editor.list_index, 6);
+        editor.handle_key(key(KeyCode::Up));
+        assert_eq!(editor.list_index, 3);
+        editor.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(editor.list_index, 0);
+    }
+
+    #[test]
+    fn horizontal_movement_wraps_across_grid_rows() {
+        let mut editor = new_editor();
+        editor.set_steps_columns(3);
+        editor.section = Section::Steps;
+        editor.handle_key(key(KeyCode::Right));
+        assert_eq!(editor.list_index, 1);
+        editor.handle_key(key(KeyCode::Left));
+        assert_eq!(editor.list_index, 0, "left at the first cell clamps");
+        for _ in 0..5 {
+            editor.handle_key(key(KeyCode::Right));
+        }
+        assert_eq!(editor.list_index, 5);
+        editor.handle_key(key(KeyCode::Left));
+        assert_eq!(editor.list_index, 4);
+        editor.handle_key(key(KeyCode::Char('l')));
+        editor.handle_key(key(KeyCode::Char('l')));
+        assert_eq!(editor.list_index, 6, "l crosses onto the next grid row");
+        editor.handle_key(key(KeyCode::Char('h')));
+        assert_eq!(editor.list_index, 5, "h wraps back onto the previous row");
+    }
+
+    #[test]
+    fn steps_columns_derive_from_width_and_widest_step() {
+        let editor = EditorState::new(
+            None,
+            vec!["cargo".to_string(), "flatpak".to_string()],
+            DEFAULT_RANDOM_DELAY_SEC,
+        );
+        assert_eq!(editor.steps_columns_for_width(80), 5);
+        assert_eq!(editor.steps_columns_for_width(96), 6);
+        assert_eq!(editor.steps_columns_for_width(24), 1);
+        assert_eq!(editor.steps_columns_for_width(9), 1);
+    }
+
+    #[test]
+    fn grid_window_follows_the_selection() {
         let mut scroll = 0usize;
-        assert_eq!(window_bounds(0, 100, 10, &mut scroll), (0, 10));
-        assert_eq!(window_bounds(9, 100, 10, &mut scroll), (0, 10));
-        assert_eq!(window_bounds(10, 100, 10, &mut scroll), (1, 11));
-        assert_eq!(window_bounds(99, 100, 10, &mut scroll), (90, 100));
-        assert_eq!(window_bounds(0, 100, 10, &mut scroll), (0, 10));
+        assert_eq!(grid_window(0, 100, 1, 10, &mut scroll), (0, 10));
+        assert_eq!(grid_window(9, 100, 1, 10, &mut scroll), (0, 10));
+        assert_eq!(grid_window(10, 100, 1, 10, &mut scroll), (1, 11));
+        assert_eq!(grid_window(99, 100, 1, 10, &mut scroll), (90, 100));
+        assert_eq!(grid_window(0, 100, 1, 10, &mut scroll), (0, 10));
         let mut tiny = 5usize;
-        assert_eq!(window_bounds(3, 4, 10, &mut tiny), (0, 4));
+        assert_eq!(grid_window(3, 4, 1, 10, &mut tiny), (0, 4));
         let mut zero = 0usize;
-        assert_eq!(window_bounds(2, 8, 0, &mut zero), (0, 0));
+        assert_eq!(grid_window(2, 8, 1, 0, &mut zero), (0, 0));
+    }
+
+    #[test]
+    fn grid_window_scrolls_by_rows_in_multi_column_mode() {
+        let mut scroll = 0usize;
+        assert_eq!(grid_window(29, 100, 3, 10, &mut scroll), (0, 30));
+        assert_eq!(grid_window(30, 100, 3, 10, &mut scroll), (3, 33));
+        let mut end = 0usize;
+        assert_eq!(grid_window(99, 100, 3, 10, &mut end), (72, 100));
     }
 
     #[test]

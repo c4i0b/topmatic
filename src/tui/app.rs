@@ -316,6 +316,12 @@ impl App {
         true
     }
 
+    pub fn set_steps_columns(&mut self, width: u16) {
+        if let View::Editor(state) = &mut self.view {
+            state.set_steps_columns(state.steps_columns_for_width(width));
+        }
+    }
+
     pub fn on_tick(&mut self) {
         self.poll_in_flight();
         if self.message != self.seen_message {

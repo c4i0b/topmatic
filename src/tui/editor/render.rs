@@ -40,25 +40,37 @@ impl EditorState {
         let mut lines = vec![self.steps_header()];
         let (steps_start, steps_end) = self.steps_window();
         let focus_steps = self.section == Section::Steps;
-        for (offset, id) in self.filtered_steps()[steps_start..steps_end]
-            .iter()
-            .enumerate()
-        {
-            let index = steps_start + offset;
-            let marker = if self.selected_steps.contains(*id) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
-            lines.push(Line::from(format!(
-                "{}{marker} {}",
-                if focus_steps && index == self.list_index {
-                    "▶ "
-                } else {
-                    "  "
-                },
-                id
-            )));
+        let columns = self.steps_columns.max(1);
+        let rows = (steps_end - steps_start).div_ceil(columns);
+        for row in 0..rows {
+            let mut spans: Vec<String> = Vec::new();
+            let mut widest = 0usize;
+            for column in 0..columns {
+                let index = steps_start + row * columns + column;
+                if index >= steps_end {
+                    break;
+                }
+                if let Some(id) = self.filtered_steps().get(index) {
+                    let marker = if self.selected_steps.contains(*id) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    let cursor = focus_steps && index == self.list_index;
+                    let cell = format!("{}{marker} {id}", if cursor { "▶ " } else { "  " });
+                    widest = widest.max(cell.chars().count());
+                    spans.push(cell);
+                }
+            }
+            let mut with_gaps = Vec::with_capacity(spans.len() * 2);
+            for (i, cell) in spans.into_iter().enumerate() {
+                if i > 0 {
+                    with_gaps.push(Span::raw("  "));
+                }
+                let padding = widest - cell.chars().count();
+                with_gaps.push(Span::raw(format!("{cell}{}", " ".repeat(padding))));
+            }
+            lines.push(Line::from(with_gaps));
         }
 
         lines.push(Line::from(""));
@@ -313,6 +325,60 @@ mod tests {
         assert!(
             filtered.contains("filter: flat▏"),
             "the engaged filter shows its query: {filtered:?}"
+        );
+    }
+
+    #[test]
+    fn multi_column_steps_lay_out_cells_across_the_row() {
+        let catalog: Vec<String> = (0..6).map(|i| format!("step_{i}")).collect();
+        let mut editor = EditorState::from_preset(
+            catalog.clone(),
+            catalog,
+            "all-daily",
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        editor.set_steps_columns(3);
+        let lines: Vec<String> = editor.body_lines().iter().map(line_text).collect();
+        let row = lines
+            .iter()
+            .find(|line| line.contains("step_0"))
+            .expect("first grid row renders");
+        let pos = |name: &str| {
+            row.find(name)
+                .unwrap_or_else(|| panic!("{name:?} missing from row: {row:?}"))
+        };
+        assert!(pos("step_0") < pos("step_1") && pos("step_1") < pos("step_2"));
+        let second = lines
+            .iter()
+            .find(|line| line.contains("step_3"))
+            .expect("second grid row renders");
+        assert!(second.contains("step_4") && second.contains("step_5"));
+        assert!(
+            !row.contains("step_3"),
+            "cells wrap onto the next rendered row, not across the first"
+        );
+    }
+
+    #[test]
+    fn multi_column_grid_keeps_the_cursor_marker_on_the_focused_cell() {
+        let catalog: Vec<String> = (0..6).map(|i| format!("step_{i}")).collect();
+        let mut editor = EditorState::from_preset(
+            catalog.clone(),
+            catalog,
+            "all-daily",
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        editor.set_steps_columns(3);
+        editor.section = Section::Steps;
+        editor.handle_key(crossterm::event::KeyCode::Right.into());
+        let lines: Vec<String> = editor.body_lines().iter().map(line_text).collect();
+        let row = lines
+            .iter()
+            .find(|line| line.contains("step_1"))
+            .expect("focused row renders");
+        assert!(
+            row.contains("▶ [x] step_1"),
+            "the cursor marker lands on the focused cell: {row:?}"
         );
     }
 }

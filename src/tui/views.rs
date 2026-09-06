@@ -249,7 +249,7 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
         View::Dashboard => {
             "L activity  / filter  n new  e edit  d delete  r run now  l logs  ? help  q quit"
         }
-        View::Editor(_) => "↑↓ move  enter edit/save  tab section  esc back  q quit",
+        View::Editor(_) => "↑↓←→ move  enter edit/save  tab section  esc back  q quit",
         View::PresetPicker { .. } => "enter choose  esc back  q quit",
         View::Logs(state) if state.follow => "x stop  esc background  q quit",
         View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
@@ -394,7 +394,7 @@ pub(crate) fn editor_help() -> Vec<Line<'static>> {
             title: "Move & edit",
             keys: &[
                 ("tab / shift-tab", "switch section"),
-                ("↑/↓ or j/k", "move in the current section"),
+                ("↑↓←→ or hjkl", "move in the current section"),
                 ("enter / space", "act on the highlighted row"),
                 ("/", "filter the steps list"),
             ],

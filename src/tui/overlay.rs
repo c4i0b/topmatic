@@ -68,9 +68,9 @@ impl Overlay {
             body.push(line);
         }
         let hint = if self.options.is_empty() {
-            " esc closes"
+            "esc closes"
         } else {
-            " enter select · esc cancel"
+            "enter select · esc cancel"
         };
         body.push(Line::from(Span::styled(
             hint,
@@ -150,6 +150,11 @@ mod tests {
         assert!(
             visible.contains("esc closes"),
             "read-only overlay hint:\n{visible}"
+        );
+        let hint_row = rows.iter().find(|r| r.contains("esc closes")).unwrap();
+        assert!(
+            hint_row.contains("│esc closes"),
+            "hint aligns with the body content, one column after the border:\n{visible}"
         );
     }
 

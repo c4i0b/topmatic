@@ -222,19 +222,19 @@ pub(crate) fn dashboard_help() -> Vec<Line<'static>> {
         lines.extend(group_lines(group));
     }
     lines.push(Line::from(Span::styled(
-        "schedules run at midnight; missed runs catch up on next boot",
+        "• midnight — missed runs catch up on next boot",
         Style::new().fg(Color::DarkGray),
     )));
     lines.push(Line::from(Span::styled(
-        "keep running logged out: loginctl enable/disable-linger",
+        "• linger — loginctl enable/disable-linger",
         Style::new().fg(Color::DarkGray),
     )));
     lines.push(Line::from(Span::styled(
-        "config: ~/.config/topmatic/config.toml (source of truth)",
+        "• config — ~/.config/topmatic/config.toml",
         Style::new().fg(Color::DarkGray),
     )));
     lines.push(Line::from(Span::styled(
-        "topgrade runs isolated, no sudo",
+        "• topgrade — isolated runs, no sudo",
         Style::new().fg(Color::DarkGray),
     )));
     lines
@@ -400,6 +400,34 @@ mod tests {
             text.contains("loginctl enable/disable-linger"),
             "help must say how to control linger:\n{text}"
         );
+    }
+
+    #[test]
+    fn help_notes_are_concise_topics_without_semicolons() {
+        let text: String = dashboard_help()
+            .iter()
+            .flat_map(|line| line.iter().map(|s| s.content.as_ref()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !text.contains(';'),
+            "notes should not use semicolons:\n{text}"
+        );
+        let bullets: Vec<String> = dashboard_help()
+            .iter()
+            .map(|line| line.iter().map(|s| s.content.as_ref()).collect::<String>())
+            .filter(|line| line.starts_with('•'))
+            .collect();
+        assert!(
+            bullets.len() >= 3,
+            "notes should read as concise topic bullets:\n{bullets:?}"
+        );
+        for bullet in &bullets {
+            assert!(
+                bullet.chars().count() <= 48,
+                "a note bullet should be terse (<=48 cols): {bullet:?}"
+            );
+        }
     }
 
     #[test]

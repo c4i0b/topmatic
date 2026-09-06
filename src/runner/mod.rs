@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufReader, BufWriter, Write};
+use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -191,16 +191,14 @@ fn execute(
     let stdout_terminal = io::stdout();
     let stderr_terminal = io::stdout();
     let out_handle = std::thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut writer = Writer::new(BufWriter::new(log_out), stdout_terminal, true);
-        let _ = io::copy(&mut reader, &mut writer);
-        let _ = writer.flush();
+        let reader = BufReader::new(stdout);
+        let writer = Writer::new(log_out, stdout_terminal, true);
+        pump_lines(reader, writer);
     });
     let err_handle = std::thread::spawn(move || {
-        let mut reader = BufReader::new(stderr);
-        let mut writer = Writer::new(BufWriter::new(log_err), stderr_terminal, true);
-        let _ = io::copy(&mut reader, &mut writer);
-        let _ = writer.flush();
+        let reader = BufReader::new(stderr);
+        let writer = Writer::new(log_err, stderr_terminal, true);
+        pump_lines(reader, writer);
     });
 
     let status = match child.wait() {
@@ -279,6 +277,21 @@ impl RunOutcome {
     }
 }
 
+fn pump_lines<R: std::io::BufRead, A: Write, B: Write>(mut reader: R, mut writer: Writer<A, B>) {
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                if writer.write_all(&line).is_err() || writer.flush().is_err() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 struct Writer<A: Write, B: Write> {
     out: A,
     terminal: B,
@@ -310,6 +323,7 @@ impl<A: Write, B: Write> Write for Writer<A, B> {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use std::io::BufWriter;
 
     fn writer(tee: bool) -> (Writer<BufWriter<std::fs::File>, Vec<u8>>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -384,6 +398,56 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("capture.log")).unwrap(),
             "topgrade output\n"
+        );
+    }
+
+    #[test]
+    fn run_log_flushes_after_each_line() {
+        struct FlushCounter {
+            inner: std::fs::File,
+            flushes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        }
+        impl Write for FlushCounter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.inner.write_all(buf)?;
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.flushes
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.inner.flush()
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("live.log");
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        let flushes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let writer = Writer::new(
+            FlushCounter {
+                inner: file,
+                flushes: std::sync::Arc::clone(&flushes),
+            },
+            Vec::new(),
+            false,
+        );
+        let reader = BufReader::new(std::io::Cursor::new("one\ntwo\nthree"));
+        pump_lines(reader, writer);
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "one\ntwo\nthree",
+            "the whole output lands in the file"
+        );
+        assert_eq!(
+            flushes.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "each line is flushed to disk as it arrives, not buffered until the end"
         );
     }
 }

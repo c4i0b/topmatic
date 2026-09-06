@@ -124,14 +124,7 @@ impl EditorState {
     }
 
     fn save_row_text(&self) -> String {
-        let name = if self.creating {
-            self.suggested_name
-                .clone()
-                .unwrap_or_else(|| "new profile".to_string())
-        } else {
-            self.original_name.clone().unwrap_or_default()
-        };
-        format!("save \"{name}\"{}", if self.is_dirty() { " *" } else { "" })
+        format!("save{}", if self.is_dirty() { " *" } else { "" })
     }
 }
 
@@ -206,8 +199,12 @@ mod tests {
         };
         let preset = row_position("preset:");
         let weekday = row_position("weekday:");
-        let save = row_position("save \"all-daily\"");
+        let save = row_position("save");
         assert!(preset < weekday && weekday < save);
+        assert!(
+            !joined.contains("all-daily"),
+            "the name is confirmed in its own popup, not the save row"
+        );
         assert!(joined.contains("schedule: weekly Mon"));
         assert!(joined.contains("notify: on failure"));
         assert!(joined.contains("missed runs catch up on next boot"));
@@ -219,7 +216,8 @@ mod tests {
         editor.notify = NotifyPolicy::Never;
         let lines = editor.body_lines();
         let last = lines.last().unwrap();
-        assert!(line_text(last).contains("save \"all-daily\" *"));
+        assert!(line_text(last).contains("save *"));
+        assert!(!line_text(last).contains("all-daily"));
     }
 
     #[test]

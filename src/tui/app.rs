@@ -393,7 +393,7 @@ impl App {
                     None => format!("{profile} not running"),
                 }
             };
-            state.content = logs::tail(&self.paths, &profile, 24);
+            state.content = logs::tail(&self.paths, &profile, 200);
         }
     }
 
@@ -1412,13 +1412,16 @@ mod tests {
     }
 
     #[test]
-    fn live_view_backgrounds_with_escape_and_run_keeps_going() {
+    fn live_view_escape_returns_and_run_keeps_going() {
         let (mut app, _harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
         settle(&mut app);
         app.handle_key(key(KeyCode::Esc));
         assert!(matches!(app.view, View::Dashboard));
-        assert!(app.rows[0].running, "backgrounding keeps the run alive");
+        assert!(
+            app.rows[0].running,
+            "leaving the live view keeps the run alive"
+        );
     }
 
     #[test]

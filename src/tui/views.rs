@@ -251,7 +251,7 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
         }
         View::Editor(_) => "↑↓←→ move  enter edit/save  tab section  esc back  q quit",
         View::PresetPicker { .. } => "enter choose  esc back  q quit",
-        View::Logs(state) if state.follow => "x stop  esc background  q quit",
+        View::Logs(state) if state.follow => "x stop  esc back  q quit",
         View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
     }
 }

@@ -15,20 +15,36 @@ pub struct LogsState {
     pub selected: usize,
     pub content: Option<String>,
     pub scroll: u16,
+    pub follow: bool,
+    pub follow_header: String,
 }
 
 impl LogsState {
     pub fn open(paths: &Paths, profile: &str) -> Self {
-        let mut state = Self {
+        let mut state = Self::empty(profile);
+        state.reload(paths);
+        state.load_selected();
+        state
+    }
+
+    pub fn follow(profile: &str) -> Self {
+        Self {
+            follow: true,
+            follow_header: format!("starting {profile}…"),
+            ..Self::empty(profile)
+        }
+    }
+
+    fn empty(profile: &str) -> Self {
+        Self {
             profile: profile.to_string(),
             entries: Vec::new(),
             selected: 0,
             content: None,
             scroll: 0,
-        };
-        state.reload(paths);
-        state.load_selected();
-        state
+            follow: false,
+            follow_header: String::new(),
+        }
     }
 
     pub fn reload(&mut self, paths: &Paths) {
@@ -46,6 +62,20 @@ impl LogsState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        if self.follow {
+            return match key.code {
+                KeyCode::Esc | KeyCode::Char('h' | 'H') => true,
+                KeyCode::Up | KeyCode::Char('k' | 'K') => {
+                    self.scroll = self.scroll.saturating_sub(1);
+                    false
+                }
+                KeyCode::Down | KeyCode::Char('j' | 'J') => {
+                    self.scroll = self.scroll.saturating_add(1);
+                    false
+                }
+                _ => false,
+            };
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('h' | 'H') => return true,
             KeyCode::Up | KeyCode::Char('k' | 'K') => {
@@ -104,6 +134,17 @@ pub fn tail(paths: &Paths, profile: &str, lines: usize) -> Option<String> {
 }
 
 pub fn render(state: &LogsState, frame: &mut Frame, area: Rect) {
+    if state.follow {
+        let paragraph = Paragraph::new(state.content.clone().unwrap_or_default())
+            .scroll((state.scroll, 0))
+            .block(
+                Block::bordered()
+                    .title(state.follow_header.clone())
+                    .style(Style::new().fg(Color::Cyan)),
+            );
+        frame.render_widget(paragraph, area);
+        return;
+    }
     if let Some(content) = &state.content {
         let paragraph = Paragraph::new(content.clone())
             .scroll((state.scroll, 0))

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -10,6 +11,7 @@ use super::SystemdCtl;
 pub struct FakeCtl {
     dir: PathBuf,
     calls: Arc<Mutex<Vec<String>>>,
+    pub services: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
     pub existing_instances: Vec<String>,
     pub linger: Option<bool>,
     pub fail_enable_for: Option<String>,
@@ -21,6 +23,7 @@ impl FakeCtl {
         Self {
             dir,
             calls: Arc::new(Mutex::new(Vec::new())),
+            services: Arc::new(Mutex::new(HashMap::new())),
             existing_instances: Vec::new(),
             linger: Some(false),
             fail_enable_for: None,
@@ -29,6 +32,10 @@ impl FakeCtl {
 
     pub fn shared_calls(&self) -> Arc<Mutex<Vec<String>>> {
         Arc::clone(&self.calls)
+    }
+
+    pub fn shared_services(&self) -> Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>> {
+        Arc::clone(&self.services)
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -66,6 +73,24 @@ impl SystemdCtl for FakeCtl {
 
     fn start_service(&self, profile: &str) -> io::Result<()> {
         self.record(format!("start:{profile}"));
+        self.services
+            .lock()
+            .unwrap()
+            .insert(profile.to_string(), chrono::Utc::now());
+        Ok(())
+    }
+
+    fn service_active(&self, profile: &str) -> bool {
+        self.services.lock().unwrap().contains_key(profile)
+    }
+
+    fn service_since(&self, profile: &str) -> Option<DateTime<Utc>> {
+        self.services.lock().unwrap().get(profile).copied()
+    }
+
+    fn stop_service(&self, profile: &str) -> io::Result<()> {
+        self.record(format!("stop:{profile}"));
+        self.services.lock().unwrap().remove(profile);
         Ok(())
     }
 

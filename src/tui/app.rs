@@ -32,6 +32,7 @@ pub struct App {
     pub list_area: Cell<Rect>,
     pub message: String,
     pub should_quit: bool,
+    pub tick: u64,
 }
 
 impl App {
@@ -75,6 +76,7 @@ impl App {
             list_area: Cell::new(Rect::default()),
             message: String::new(),
             should_quit: false,
+            tick: 0,
         };
         let report = systemd_sync::sync(&app.config, &app.topmatic_bin, app.ctl.as_ref());
         app.message = if report.errors.is_empty() {
@@ -141,15 +143,88 @@ impl App {
             .config
             .profiles
             .iter()
-            .map(|profile| dashboard::ProfileRow {
-                name: profile.name.clone(),
-                schedule: profile.schedule.summary(),
-                next_run: self.ctl.next_run(&profile.name),
-                status: read_status(&self.paths, &profile.name).ok().flatten(),
-                timer_active: self.ctl.timer_active(&profile.name),
+            .map(|profile| {
+                let name = &profile.name;
+                dashboard::ProfileRow {
+                    name: name.clone(),
+                    schedule: profile.schedule.summary(),
+                    next_run: self.ctl.next_run(name),
+                    status: read_status(&self.paths, name).ok().flatten(),
+                    timer_active: self.ctl.timer_active(name),
+                    running: self.ctl.service_active(name),
+                    running_since: self.ctl.service_since(name),
+                }
             })
             .collect();
         self.clamp_selection();
+    }
+
+    pub fn on_tick(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
+        let follow_open = matches!(&self.view, View::Logs(state) if state.follow);
+        let any_running = self.rows.iter().any(|row| row.running);
+        if follow_open || any_running || self.tick.is_multiple_of(30) {
+            self.refresh_live_state();
+        }
+    }
+
+    fn refresh_live_state(&mut self) {
+        let previous: Vec<(String, bool, Option<chrono::DateTime<chrono::Utc>>)> = self
+            .rows
+            .iter()
+            .map(|row| (row.name.clone(), row.running, row.running_since))
+            .collect();
+        self.rebuild_rows();
+        for (name, was_running, since) in previous {
+            if !was_running {
+                continue;
+            }
+            if self.rows.iter().any(|row| row.name == name && row.running) {
+                continue;
+            }
+            let status = read_status(&self.paths, &name).ok().flatten();
+            let finished_after_start = status
+                .as_ref()
+                .is_some_and(|outcome| since.is_some_and(|start| outcome.finished_at > start));
+            self.message = match (&status, finished_after_start) {
+                (Some(outcome), true) if outcome.success => format!("{name} finished ok"),
+                (Some(outcome), true) => {
+                    format!("{name} FAILED (exit {:?})", outcome.exit_code.unwrap_or(1))
+                }
+                _ => format!("{name} stopped"),
+            };
+        }
+        if let View::Logs(state) = &mut self.view
+            && state.follow
+        {
+            let profile = state.profile.clone();
+            let running = self
+                .rows
+                .iter()
+                .find(|row| row.name == profile)
+                .is_some_and(|row| row.running);
+            let status = read_status(&self.paths, &profile).ok().flatten();
+            let elapsed = self
+                .rows
+                .iter()
+                .find(|row| row.name == profile)
+                .and_then(|row| row.running_since)
+                .map(|since| dashboard::format_elapsed(chrono::Utc::now() - since))
+                .unwrap_or_default();
+            state.follow_header = if running {
+                format!("running {profile} · {elapsed}")
+            } else {
+                match status {
+                    Some(outcome) if outcome.success => format!("{profile} finished ok"),
+                    Some(outcome) => format!(
+                        "{profile} FAILED (exit {:?})",
+                        outcome.exit_code.unwrap_or(1)
+                    ),
+                    None => format!("{profile} not running"),
+                }
+            };
+            state.content = logs::tail(&self.paths, &profile, 24);
+        }
     }
 
     pub fn visible_rows(&self) -> Vec<&dashboard::ProfileRow> {
@@ -253,6 +328,12 @@ impl App {
                 editor::EditorEvent::None => self.view = View::Editor(state),
             },
             View::Logs(mut state) => {
+                if state.follow && matches!(key.code, KeyCode::Char('x' | 'X')) {
+                    let profile = state.profile.clone();
+                    self.stop_run(&profile);
+                    self.view = View::Logs(state);
+                    return;
+                }
                 if state.handle_key(key) {
                     self.rebuild_rows();
                 } else {
@@ -413,8 +494,19 @@ impl App {
             return;
         };
         match self.ctl.start_service(&name) {
-            Ok(()) => self.message = format!("started {name} in the background"),
+            Ok(()) => {
+                self.message = format!("started {name}");
+                self.rebuild_rows();
+                self.view = View::Logs(logs::LogsState::follow(&name));
+            }
             Err(error) => self.message = format!("start failed: {error}"),
+        }
+    }
+
+    fn stop_run(&mut self, profile: &str) {
+        match self.ctl.stop_service(profile) {
+            Ok(()) => self.message = format!("stopping {profile}…"),
+            Err(error) => self.message = format!("stop failed: {error}"),
         }
     }
 
@@ -446,6 +538,8 @@ mod tests {
     struct Harness {
         _tmp: tempfile::TempDir,
         calls: Arc<std::sync::Mutex<Vec<String>>>,
+        services:
+            Arc<std::sync::Mutex<std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>>>,
         unit_dir: PathBuf,
     }
 
@@ -475,6 +569,7 @@ mod tests {
         std::fs::create_dir_all(&unit_dir).unwrap();
         let ctl = FakeCtl::new(unit_dir.clone());
         let calls = ctl.shared_calls();
+        let services = ctl.shared_services();
         let mut app = App::assemble(
             crate::config::load_validated(&paths).unwrap().0,
             Vec::new(),
@@ -489,6 +584,7 @@ mod tests {
             Harness {
                 _tmp: tmp,
                 calls,
+                services,
                 unit_dir,
             },
         )
@@ -678,6 +774,103 @@ mod tests {
                 .lock()
                 .unwrap()
                 .contains(&"start:all-daily".to_string())
+        );
+        assert!(app.rows[0].running, "the row reflects the live service");
+        match &app.view {
+            View::Logs(state) => {
+                assert!(state.follow);
+                assert_eq!(state.profile, "all-daily");
+            }
+            _ => panic!("run now should open the live view"),
+        }
+    }
+
+    fn write_status(paths: &crate::paths::Paths, name: &str, success: bool, exit: i32) {
+        let started = chrono::Utc::now();
+        let outcome = crate::runner::RunOutcome {
+            profile: name.to_string(),
+            dry_run: false,
+            skipped: false,
+            success,
+            exit_code: Some(exit),
+            started_at: started,
+            finished_at: chrono::Utc::now(),
+            duration_secs: 2.0,
+            log_path: paths.logs_dir(name).join("t.log"),
+        };
+        std::fs::create_dir_all(paths.status_file(name).parent().unwrap()).unwrap();
+        std::fs::write(
+            paths.status_file(name),
+            serde_json::to_string(&outcome).unwrap(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(paths.logs_dir(name)).unwrap();
+        std::fs::write(paths.logs_dir(name).join("t.log"), "done").unwrap();
+    }
+
+    #[test]
+    fn live_view_backgrounds_with_escape_and_run_keeps_going() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.view, View::Dashboard));
+        assert!(app.rows[0].running, "backgrounding keeps the run alive");
+    }
+
+    #[test]
+    fn live_view_x_stops_the_run_on_demand() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        app.handle_key(key(KeyCode::Char('x')));
+        assert!(app.message.contains("stopping all-daily"));
+        assert!(
+            harness
+                .calls
+                .lock()
+                .unwrap()
+                .contains(&"stop:all-daily".to_string())
+        );
+        app.on_tick();
+        assert!(!app.rows[0].running);
+    }
+
+    #[test]
+    fn tick_reports_when_a_followed_run_finishes_ok() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        harness.services.lock().unwrap().remove("all-daily");
+        write_status(&app.paths, "all-daily", true, 0);
+        app.on_tick();
+        assert!(app.message.contains("all-daily finished ok"));
+        assert!(!app.rows[0].running);
+        match &app.view {
+            View::Logs(state) => assert!(state.follow_header.contains("finished ok")),
+            _ => panic!("view should stay live"),
+        }
+    }
+
+    #[test]
+    fn tick_reports_a_failed_run_with_its_exit_code() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        harness.services.lock().unwrap().remove("all-daily");
+        write_status(&app.paths, "all-daily", false, 3);
+        app.on_tick();
+        assert!(app.message.contains("FAILED (exit 3)"));
+    }
+
+    #[test]
+    fn tick_without_changes_does_not_resend_the_finish_message() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        harness.services.lock().unwrap().remove("all-daily");
+        app.on_tick();
+        let first = app.message.clone();
+        app.on_tick();
+        app.on_tick();
+        assert_eq!(
+            app.message, first,
+            "the transition fires once, not on every tick"
         );
     }
 

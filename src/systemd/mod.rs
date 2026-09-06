@@ -23,6 +23,9 @@ pub trait SystemdCtl {
     fn next_run(&self, profile: &str) -> Option<DateTime<Utc>>;
     fn timer_active(&self, profile: &str) -> bool;
     fn linger_enabled(&self) -> Option<bool>;
+    fn service_active(&self, profile: &str) -> bool;
+    fn service_since(&self, profile: &str) -> Option<DateTime<Utc>>;
+    fn stop_service(&self, profile: &str) -> io::Result<()>;
 }
 
 pub struct RealSystemdCtl {
@@ -94,6 +97,41 @@ impl SystemdCtl for RealSystemdCtl {
             .output()
             .map(|output| output.status.success())
             .unwrap_or(false)
+    }
+
+    fn service_active(&self, profile: &str) -> bool {
+        Command::new("systemctl")
+            .args([
+                "--user",
+                "is-active",
+                &units::timer_instance(profile).replace(".timer", ".service"),
+            ])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    fn service_since(&self, profile: &str) -> Option<DateTime<Utc>> {
+        let unit = units::timer_instance(profile).replace(".timer", ".service");
+        let output = Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                &unit,
+                "-p",
+                "ActiveEnterTimestamp",
+                "--value",
+            ])
+            .output()
+            .ok()?;
+        parse_systemd_timestamp(String::from_utf8_lossy(&output.stdout).trim())
+    }
+
+    fn stop_service(&self, profile: &str) -> io::Result<()> {
+        let unit = units::timer_instance(profile).replace(".timer", ".service");
+        let mut command = Command::new("systemctl");
+        command.args(["--user", "stop", &unit]);
+        run_status(command)
     }
 
     fn linger_enabled(&self) -> Option<bool> {

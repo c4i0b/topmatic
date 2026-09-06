@@ -17,6 +17,8 @@ pub struct ProfileRow {
     pub next_run: Option<DateTime<Utc>>,
     pub status: Option<RunOutcome>,
     pub timer_active: bool,
+    pub running: bool,
+    pub running_since: Option<DateTime<Utc>>,
 }
 
 fn state_marker(row: &ProfileRow) -> Span<'static> {
@@ -42,6 +44,19 @@ fn status_span(status: &Option<RunOutcome>) -> Span<'static> {
             outcome.finished_at.format("FAILED %d %b %H:%M").to_string(),
             Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
+    }
+}
+
+pub(crate) fn format_elapsed(delta: chrono::Duration) -> String {
+    let seconds = delta.num_seconds().max(0);
+    let (hours, rest) = (seconds / 3_600, seconds % 3_600);
+    let (minutes, secs) = (rest / 60, rest % 60);
+    if hours > 0 {
+        format!("{hours}h{minutes:02}m")
+    } else if minutes > 0 {
+        format!("{minutes}m{secs:02}s")
+    } else {
+        format!("{secs}s")
     }
 }
 
@@ -96,16 +111,31 @@ fn detail_lines<'a>(profile: &Profile, row: &ProfileRow, log_tail: Option<&str>)
                     .unwrap_or_else(|| "—".to_string()),
             ),
         ]),
-        Line::from(vec![
-            Span::styled("last run   ", Style::new().fg(Color::Cyan)),
-            status_span(&row.status),
-            Span::raw(
-                row.status
-                    .as_ref()
-                    .map(|outcome| format!(" · {:.1}s", outcome.duration_secs))
-                    .unwrap_or_default(),
-            ),
-        ]),
+        Line::from(if row.running {
+            vec![
+                Span::styled("running    ", Style::new().fg(Color::Cyan)),
+                Span::styled(
+                    format!(
+                        "● for {}",
+                        row.running_since
+                            .map(|since| format_elapsed(Utc::now() - since))
+                            .unwrap_or_default()
+                    ),
+                    Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ),
+            ]
+        } else {
+            vec![
+                Span::styled("last run   ", Style::new().fg(Color::Cyan)),
+                status_span(&row.status),
+                Span::raw(
+                    row.status
+                        .as_ref()
+                        .map(|outcome| format!(" · {:.1}s", outcome.duration_secs))
+                        .unwrap_or_default(),
+                ),
+            ]
+        }),
         Line::from(vec![
             Span::styled("steps      ", Style::new().fg(Color::Cyan)),
             Span::styled(step_preview(&profile.steps), Style::new().fg(Color::Green)),
@@ -252,6 +282,8 @@ mod tests {
             next_run: None,
             status: None,
             timer_active: true,
+            running: false,
+            running_since: None,
         };
         let lines = detail_text(&detail_lines(&profile, &row, None));
         let steps = lines
@@ -281,6 +313,8 @@ mod tests {
             next_run: None,
             status: None,
             timer_active: true,
+            running: false,
+            running_since: None,
         };
         let pane_width = 80;
         for line in detail_text(&detail_lines(&profile, &row, None)) {
@@ -315,6 +349,8 @@ mod tests {
             next_run: None,
             status: None,
             timer_active: true,
+            running: false,
+            running_since: None,
         };
 
         use ratatui::{Terminal, backend::TestBackend, widgets::Wrap};

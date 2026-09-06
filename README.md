@@ -44,7 +44,7 @@ topmatic run <profile> [--dry-run]
 topmatic reset [--all]   # remove units/schedules/history; --all also archives the config
 ```
 
-In the TUI: `n` new (from a preset), `e` edit, `d` delete, `r` run now, `l` logs, `/` filter, mouse click/scroll, `?` help, `q` quit (lower or upper case; while a filter is active, `q` is just a letter). The right pane shows live details for the selected profile: schedule, countdown to next fire, timer state and the tail of the last run log.
+In the TUI: `n` new (from a preset), `e` edit, `d` delete, `r` run now (opens the live log view — `esc` backgrounds it while the dashboard badge tracks `running · 42s`, `x` stops the run), `l` logs, `/` filter, mouse click/scroll, `?` help, `q` quit (lower or upper case; while a filter is active, `q` is just a letter). The right pane shows live details for the selected profile: schedule, countdown to next fire, timer state and the tail of the last run log.
 
 The editor cycles its sections with `Tab` — steps, schedule, options, save — and `Enter` acts on the highlighted row: it toggles a step, opens a picker for the schedule frequency or for notifications, or saves from the save row (a `*` marks unsaved changes). Schedules are frequencies anchored at midnight — daily, weekly, every 6 hours — with custom `OnCalendar` as the escape hatch; missed runs catch up on the next boot.
 

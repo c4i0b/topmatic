@@ -113,6 +113,7 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
             "↑↓ move  enter edit/save  tab section  / filter steps  esc back  q quit"
         }
         View::PresetPicker { .. } => "enter choose  esc back  q quit",
+        View::Logs(state) if state.follow => "x stop  esc background  q quit",
         View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
         View::Help => "any key closes  q quit",
         View::Confirm { .. } => "y confirm delete  esc cancels  q quit",
@@ -270,6 +271,10 @@ mod tests {
             .contains("enter edit/save")
         );
         assert!(footer_hints(&View::Help, false).contains("any key closes"));
+        assert!(
+            footer_hints(&View::Logs(crate::tui::logs::LogsState::follow("x")), false)
+                .contains("x stop")
+        );
         assert!(
             footer_hints(
                 &View::Confirm {

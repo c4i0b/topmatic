@@ -10,7 +10,7 @@ pub mod sync;
 pub mod units;
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 pub trait SystemdCtl {
     fn unit_dir(&self) -> PathBuf;

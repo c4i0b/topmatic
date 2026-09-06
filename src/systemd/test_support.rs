@@ -1,6 +1,6 @@
-use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 
@@ -9,7 +9,7 @@ use super::SystemdCtl;
 #[cfg(test)]
 pub struct FakeCtl {
     dir: PathBuf,
-    calls: RefCell<Vec<String>>,
+    calls: Arc<Mutex<Vec<String>>>,
     pub existing_instances: Vec<String>,
     pub linger: Option<bool>,
     pub fail_enable_for: Option<String>,
@@ -20,19 +20,23 @@ impl FakeCtl {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
-            calls: RefCell::new(Vec::new()),
+            calls: Arc::new(Mutex::new(Vec::new())),
             existing_instances: Vec::new(),
             linger: Some(false),
             fail_enable_for: None,
         }
     }
 
+    pub fn shared_calls(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.calls)
+    }
+
     pub fn calls(&self) -> Vec<String> {
-        self.calls.borrow().clone()
+        self.calls.lock().unwrap().clone()
     }
 
     fn record(&self, call: String) {
-        self.calls.borrow_mut().push(call);
+        self.calls.lock().unwrap().push(call);
     }
 }
 
@@ -80,7 +84,8 @@ impl SystemdCtl for FakeCtl {
 
     fn timer_active(&self, profile: &str) -> bool {
         self.calls
-            .borrow()
+            .lock()
+            .unwrap()
             .iter()
             .any(|call| call == &format!("enable:{profile}"))
     }

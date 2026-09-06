@@ -20,7 +20,7 @@ use super::presets;
 pub struct App {
     pub config: AppConfig,
     pub paths: Paths,
-    pub ctl: RealSystemdCtl,
+    pub ctl: Box<dyn SystemdCtl>,
     pub topmatic_bin: PathBuf,
     pub topgrade_bin: Option<PathBuf>,
     pub catalog: Vec<String>,
@@ -42,11 +42,24 @@ impl App {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-        let ctl = RealSystemdCtl::new(home);
+        let ctl: Box<dyn SystemdCtl> = Box::new(RealSystemdCtl::new(home));
         let topmatic_bin = std::env::current_exe()?;
         let path_env = std::env::var("PATH").unwrap_or_default();
         let topgrade_bin = resolve::find_in_path("topgrade", &path_env);
 
+        let mut app = Self::assemble(config, issues, paths, ctl, topmatic_bin, topgrade_bin);
+        app.catalog = app.load_catalog();
+        Ok(app)
+    }
+
+    pub fn assemble(
+        config: AppConfig,
+        issues: Vec<String>,
+        paths: Paths,
+        ctl: Box<dyn SystemdCtl>,
+        topmatic_bin: PathBuf,
+        topgrade_bin: Option<PathBuf>,
+    ) -> Self {
         let mut app = Self {
             config,
             paths,
@@ -63,8 +76,7 @@ impl App {
             message: String::new(),
             should_quit: false,
         };
-        app.catalog = app.load_catalog();
-        let report = systemd_sync::sync(&app.config, &app.topmatic_bin, &app.ctl);
+        let report = systemd_sync::sync(&app.config, &app.topmatic_bin, app.ctl.as_ref());
         app.message = if report.errors.is_empty() {
             format!(
                 "synced{}{}{}{}",
@@ -110,7 +122,7 @@ impl App {
                 "warning: topgrade not found in PATH (cargo install topgrade)".to_string();
         }
         app.rebuild_rows();
-        Ok(app)
+        app
     }
 
     fn load_catalog(&self) -> Vec<String> {
@@ -374,7 +386,7 @@ impl App {
             self.view = View::Editor(Box::new(state));
             return;
         }
-        let report = systemd_sync::sync(&self.config, &self.topmatic_bin, &self.ctl);
+        let report = systemd_sync::sync(&self.config, &self.topmatic_bin, self.ctl.as_ref());
         if !report.errors.is_empty() {
             self.message = format!("sync errors: {}", report.errors.join("; "));
         } else {
@@ -389,7 +401,7 @@ impl App {
             self.message = format!("save failed: {error}");
         }
         let _ = crate::systemd::sync::purge_profile_state(&self.paths, name);
-        let _ = systemd_sync::sync(&self.config, &self.topmatic_bin, &self.ctl);
+        let _ = systemd_sync::sync(&self.config, &self.topmatic_bin, self.ctl.as_ref());
         self.message = format!("deleted {name} (run history purged)");
         self.view = View::Dashboard;
         self.selected = 0;
@@ -423,7 +435,222 @@ pub(crate) fn cancel_message(dirty: bool) -> String {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use crate::domain::profile::{NotifyPolicy, Profile, Scope};
+    use crate::domain::schedule::Schedule;
+    use crate::systemd::test_support::FakeCtl;
+    use std::sync::Arc;
+
+    struct Harness {
+        _tmp: tempfile::TempDir,
+        calls: Arc<std::sync::Mutex<Vec<String>>>,
+        unit_dir: PathBuf,
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+    }
+
+    fn profile(name: &str) -> Profile {
+        Profile {
+            name: name.to_string(),
+            steps: vec!["flatpak".to_string()],
+            schedule: Schedule::default(),
+            notify: NotifyPolicy::OnFailure,
+            scope: Scope::User,
+        }
+    }
+
+    fn harness(profiles: &[Profile]) -> (App, Harness) {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let mut config = AppConfig::default();
+        for profile in profiles {
+            config.upsert(profile.clone());
+        }
+        crate::config::save(&paths, &config).unwrap();
+        let unit_dir = tmp.path().join("units");
+        std::fs::create_dir_all(&unit_dir).unwrap();
+        let ctl = FakeCtl::new(unit_dir.clone());
+        let calls = ctl.shared_calls();
+        let mut app = App::assemble(
+            crate::config::load_validated(&paths).unwrap().0,
+            Vec::new(),
+            paths,
+            Box::new(ctl),
+            PathBuf::from("/bin/topmatic"),
+            Some(PathBuf::from("/nonexistent/topgrade")),
+        );
+        app.catalog = presets::fallback_catalog();
+        (
+            app,
+            Harness {
+                _tmp: tmp,
+                calls,
+                unit_dir,
+            },
+        )
+    }
+
+    fn save_editor_profile(app: &mut App, prefill: &str, name: &str) {
+        for _ in 0..3 {
+            app.handle_key(key(KeyCode::Tab));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        for _ in 0..prefill.chars().count() {
+            app.handle_key(key(KeyCode::Backspace));
+        }
+        for character in name.chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+    }
+
+    #[test]
+    fn assemble_syncs_timers_and_builds_rows() {
+        let (app, harness) = harness(&[profile("all-daily")]);
+        assert!(app.message.contains("synced"));
+        assert_eq!(app.rows.len(), 1);
+        assert_eq!(app.rows[0].name, "all-daily");
+        assert!(
+            harness
+                .calls
+                .lock()
+                .unwrap()
+                .contains(&"enable:all-daily".to_string()),
+            "boot converges systemd state: {:?}",
+            harness.calls.lock().unwrap()
+        );
+        assert!(
+            harness
+                .unit_dir
+                .join("topmatic@all-daily.timer.d/10-schedule.conf")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn dashboard_selection_moves_and_clamps() {
+        let (mut app, _harness) = harness(&[profile("a"), profile("b")]);
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected, 1);
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected, 1, "selection clamps at the end");
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn new_profile_flow_picks_preset_saves_and_converges() {
+        let (mut app, harness) = harness(&[]);
+        app.handle_key(key(KeyCode::Char('n')));
+        assert!(matches!(app.view, View::PresetPicker { .. }));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.view, View::Editor(_)));
+        save_editor_profile(&mut app, "all-daily", "all-daily");
+
+        assert!(app.message.contains("saved all-daily"));
+        assert!(matches!(app.view, View::Dashboard));
+        let saved = crate::config::load(&app.paths).unwrap();
+        assert_eq!(saved.profiles.len(), 1);
+        assert_eq!(saved.profiles[0].name, "all-daily");
+        assert!(!saved.profiles[0].steps.is_empty());
+        assert!(
+            harness
+                .calls
+                .lock()
+                .unwrap()
+                .contains(&"enable:all-daily".to_string()),
+            "saving converges the new timer"
+        );
+    }
+
+    #[test]
+    fn editing_renames_the_profile_and_purges_its_state() {
+        let (mut app, _harness) = harness(&[profile("old")]);
+        std::fs::create_dir_all(app.paths.logs_dir("old")).unwrap();
+        std::fs::write(app.paths.logs_dir("old").join("run.log"), "log").unwrap();
+
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.view, View::Editor(_)));
+        save_editor_profile(&mut app, "old", "new");
+
+        assert!(app.message.contains("saved new"));
+        let saved = crate::config::load(&app.paths).unwrap();
+        assert!(saved.profile("new").is_some());
+        assert!(saved.profile("old").is_none());
+        assert!(
+            !app.paths.logs_dir("old").exists(),
+            "renaming purges the previous profile state"
+        );
+    }
+
+    #[test]
+    fn saving_onto_an_existing_name_is_rejected_in_place() {
+        let (mut app, _harness) = harness(&[profile("a"), profile("b")]);
+        app.handle_key(key(KeyCode::Char('j')));
+        app.handle_key(key(KeyCode::Enter));
+        save_editor_profile(&mut app, "b", "a");
+
+        assert!(app.message.contains("already exists"));
+        assert!(
+            matches!(app.view, View::Editor(_)),
+            "the editor stays open so nothing is lost"
+        );
+        let saved = crate::config::load(&app.paths).unwrap();
+        assert_eq!(saved.profiles.len(), 2);
+    }
+
+    #[test]
+    fn confirmed_delete_removes_profile_and_state() {
+        let (mut app, _harness) = harness(&[profile("gone")]);
+        std::fs::create_dir_all(app.paths.logs_dir("gone")).unwrap();
+
+        app.handle_key(key(KeyCode::Char('d')));
+        assert!(matches!(app.view, View::Confirm { .. }));
+        app.handle_key(key(KeyCode::Char('y')));
+
+        assert!(app.message.contains("deleted gone"));
+        assert!(matches!(app.view, View::Dashboard));
+        let saved = crate::config::load(&app.paths).unwrap();
+        assert!(saved.profiles.is_empty());
+        assert!(!app.paths.logs_dir("gone").exists());
+    }
+
+    #[test]
+    fn run_now_starts_the_service_through_the_manager() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('r')));
+        assert!(app.message.contains("started all-daily"));
+        assert!(
+            harness
+                .calls
+                .lock()
+                .unwrap()
+                .contains(&"start:all-daily".to_string())
+        );
+    }
+
+    #[test]
+    fn logs_key_opens_the_logs_view_for_the_selection() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('l')));
+        assert!(matches!(app.view, View::Logs(_)));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.view, View::Dashboard));
+    }
+
+    #[test]
+    fn quitting_is_blocked_while_the_dashboard_filter_is_active() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
+        app.handle_key(key(KeyCode::Char('/')));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(!app.should_quit, "q must type into the filter, not quit");
+        app.handle_key(key(KeyCode::Esc));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(app.should_quit);
+    }
 
     #[test]
     fn cancel_feedback_only_when_something_was_lost() {

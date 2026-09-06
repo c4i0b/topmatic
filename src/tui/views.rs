@@ -10,7 +10,6 @@ use super::dashboard;
 use super::editor;
 use super::logs;
 use super::presets;
-use crate::systemd::SystemdCtl;
 
 pub(crate) fn draw(app: &App, frame: &mut Frame) {
     let [header, body, footer] = Layout::vertical([

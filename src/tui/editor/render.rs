@@ -89,10 +89,6 @@ impl EditorState {
                 self.schedule_row_text(*row)
             )));
         }
-        lines.push(Line::from(Span::styled(
-            " midnight anchored · missed runs catch up on next boot",
-            Style::new().fg(Color::DarkGray),
-        )));
 
         lines.push(Line::from(""));
         let focus_options = self.section == Section::Options;
@@ -228,7 +224,10 @@ mod tests {
         );
         assert!(joined.contains("preset: weekly Mon"));
         assert!(joined.contains("notify: on failure"));
-        assert!(joined.contains("missed runs catch up on next boot"));
+        assert!(
+            !joined.contains("midnight anchored"),
+            "the midnight hint is gone from the editor body"
+        );
     }
 
     #[test]

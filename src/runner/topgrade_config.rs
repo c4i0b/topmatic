@@ -2,8 +2,11 @@ pub fn render() -> String {
     [
         "# Managed by topmatic. This file isolates topmatic from your own topgrade",
         "# configuration; manual edits will be overwritten.",
-        "skip_notify = true",
-        "no_retry = true",
+        "assume_yes = true",
+        "cleanup = true",
+        "ask_retry = false",
+        "auto_retry = 1",
+        "notify_end = \"never\"",
         "no_self_update = true",
     ]
     .join("\n")
@@ -20,10 +23,28 @@ mod tests {
 
     #[test]
     fn renders_unattended_defaults() {
-        let text = render();
-        assert!(text.contains("skip_notify = true"));
-        assert!(text.contains("no_retry = true"));
-        assert!(text.contains("no_self_update = true"));
+        let parsed: toml::Value = toml::from_str(&render()).unwrap();
+        assert_eq!(
+            parsed.get("assume_yes").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(parsed.get("cleanup").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            parsed.get("ask_retry").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            parsed.get("auto_retry").and_then(|v| v.as_integer()),
+            Some(1)
+        );
+        assert_eq!(
+            parsed.get("notify_end").and_then(|v| v.as_str()),
+            Some("never")
+        );
+        assert_eq!(
+            parsed.get("no_self_update").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]
@@ -39,17 +60,9 @@ mod tests {
     }
 
     #[test]
-    fn rendered_base_config_is_valid_toml() {
-        let parsed: toml::Value =
-            toml::from_str(&render()).expect("base config must be valid TOML");
-        assert_eq!(
-            parsed.get("skip_notify").and_then(|v| v.as_bool()),
-            Some(true)
-        );
-        assert_eq!(parsed.get("no_retry").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(
-            parsed.get("no_self_update").and_then(|v| v.as_bool()),
-            Some(true)
-        );
+    fn never_uses_deprecated_or_legacy_keys() {
+        let text = render();
+        assert!(!text.contains("skip_notify"), "deprecated in topgrade");
+        assert!(!text.contains("no_retry"), "legacy alias of ask_retry");
     }
 }

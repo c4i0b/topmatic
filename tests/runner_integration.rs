@@ -119,10 +119,9 @@ fn successful_run_records_argv_logs_and_status() {
     assert!(!outcome.skipped);
 
     let argv = fixture.argv();
-    assert!(argv.contains("--no-ask-retry"));
-    assert!(argv.contains("--cleanup"));
     assert!(argv.contains("--only flatpak cargo"));
-    assert!(argv.contains("--yes"));
+    assert!(!argv.contains("--yes"));
+    assert!(!argv.contains("--cleanup"));
     assert!(argv.contains(&format!(
         "--config {}",
         fixture.paths.topgrade_config_file().display()
@@ -154,7 +153,7 @@ fn topgrade_config_file_is_written_and_isolated() {
     .unwrap();
 
     let content = fs::read_to_string(fixture.paths.topgrade_config_file()).unwrap();
-    assert!(content.contains("skip_notify = true"));
+    assert!(content.contains("notify_end = \"never\""));
     assert!(content.contains("no_self_update = true"));
 }
 

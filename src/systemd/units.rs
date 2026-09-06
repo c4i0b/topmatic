@@ -66,7 +66,7 @@ pub fn service_unit(topmatic_bin: &Path, scope: Scope) -> String {
          Nice=19\n\
          CPUSchedulingPolicy=batch\n\
          IOSchedulingClass=idle\n\
-         TimeoutStartSec=30min\n",
+         TimeoutStartSec=45min\n",
         topmatic_bin.display()
     )
 }
@@ -150,7 +150,7 @@ mod tests {
         assert!(unit.contains("Nice=19"));
         assert!(unit.contains("CPUSchedulingPolicy=batch"));
         assert!(unit.contains("IOSchedulingClass=idle"));
-        assert!(unit.contains("TimeoutStartSec=30min"));
+        assert!(unit.contains("TimeoutStartSec=45min"));
         assert!(unit.contains("ConditionACPower=true"));
     }
 

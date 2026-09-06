@@ -8,9 +8,7 @@ pub fn topgrade_argv(profile: &Profile, topgrade_config: &Path, dry_run: bool) -
         "topgrade".into(),
         "--config".into(),
         topgrade_config.as_os_str().to_os_string(),
-        "--no-ask-retry".into(),
     ];
-    argv.push("--cleanup".into());
     if dry_run {
         argv.push("--dry-run".into());
     }
@@ -18,7 +16,6 @@ pub fn topgrade_argv(profile: &Profile, topgrade_config: &Path, dry_run: bool) -
         argv.push("--only".into());
         argv.extend(profile.steps.iter().map(|s| s.as_str().into()));
     }
-    argv.push("--yes".into());
     argv
 }
 
@@ -45,11 +42,11 @@ mod tests {
     }
 
     #[test]
-    fn composes_expected_order_with_cleanup_and_steps() {
+    fn composes_config_dry_run_and_steps() {
         let argv = topgrade_argv(
             &profile(&["flatpak", "cargo"]),
             Path::new("/cfg/topgrade.toml"),
-            false,
+            true,
         );
         assert_eq!(
             strings(&argv),
@@ -57,25 +54,28 @@ mod tests {
                 "topgrade",
                 "--config",
                 "/cfg/topgrade.toml",
-                "--no-ask-retry",
-                "--cleanup",
+                "--dry-run",
                 "--only",
                 "flatpak",
                 "cargo",
-                "--yes",
             ]
         );
     }
 
     #[test]
-    fn cleanup_is_always_passed() {
+    fn policy_flags_live_in_the_generated_config_not_argv() {
         let argv = topgrade_argv(
             &profile(&["flatpak"]),
             Path::new("/cfg/topgrade.toml"),
             false,
         );
-        assert!(strings(&argv).contains(&"--cleanup".to_string()));
-        assert!(!strings(&argv).contains(&"--dry-run".to_string()));
+        let rendered = strings(&argv);
+        for policy_flag in ["--yes", "--cleanup", "--no-ask-retry", "--auto-retry"] {
+            assert!(
+                !rendered.contains(&policy_flag.to_string()),
+                "{policy_flag} belongs to the generated topgrade.toml"
+            );
+        }
     }
 
     #[test]

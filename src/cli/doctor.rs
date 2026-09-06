@@ -44,10 +44,14 @@ pub fn run(repair: bool) -> anyhow::Result<()> {
     let ctl = super::user_ctl()?;
     match ctl.linger_enabled() {
         Some(true) => println!("ok:   lingering enabled"),
-        Some(false) => println!(
-            "warn: lingering off, timers only fire with an open session (L in the TUI or loginctl enable-linger)"
-        ),
-        None => println!("warn: linger state unknown"),
+        Some(false) => {
+            println!("info: lingering is off — scheduled runs only fire while you are logged in");
+            println!("      enable with: loginctl enable-linger");
+        }
+        None => {
+            println!("info: lingering state unknown");
+            println!("      check with: loginctl show-user \"$USER\" -p Linger --value");
+        }
     }
 
     let (config, issues) = match crate::config::load_validated(&paths) {

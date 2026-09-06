@@ -88,8 +88,4 @@ impl SystemdCtl for FakeCtl {
     fn linger_enabled(&self) -> Option<bool> {
         self.linger
     }
-
-    fn enable_linger(&self) -> io::Result<()> {
-        Ok(())
-    }
 }

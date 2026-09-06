@@ -70,7 +70,7 @@ fn draw_preset_picker(index: usize, frame: &mut Frame, area: Rect) {
 fn draw_header(app: &App, frame: &mut Frame, area: Rect) {
     let linger = match app.ctl.linger_enabled() {
         Some(true) => Span::styled("linger: on", Style::new().fg(Color::Green)),
-        Some(false) => Span::styled("linger: off (g to enable)", Style::new().fg(Color::Yellow)),
+        Some(false) => Span::styled("linger: off", Style::new().fg(Color::Yellow)),
         None => Span::raw(""),
     };
     let line = Line::from(vec![
@@ -109,9 +109,7 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
         return "filter: type…  Enter accept  Esc clear  ↑↓ move";
     }
     match view {
-        View::Dashboard => {
-            "/ filter  n new  e edit  d delete  r run now  l logs  g linger  ? help  q quit"
-        }
+        View::Dashboard => "/ filter  n new  e edit  d delete  r run now  l logs  ? help  q quit",
         View::Editor(_) => {
             "↑↓ move  enter edit/save  tab section  / filter steps  esc back  q quit"
         }
@@ -210,6 +208,10 @@ pub(crate) fn help_lines() -> Vec<Line<'static>> {
         Line::from("the save row asks the name and saves; enter confirms popups, esc cancels"),
         Line::from("schedules run at midnight; missed runs catch up on the next boot"),
         Line::from(""),
+        Line::from("lingering (top bar) keeps scheduled updates running while you are"),
+        Line::from("logged out; enable with `loginctl enable-linger`, disable with"),
+        Line::from("`loginctl disable-linger`."),
+        Line::from(""),
         Line::from("Config: ~/.config/topmatic/config.toml (source of truth, editable by hand)"),
         Line::from("topgrade runs fully isolated with its own config; no sudo anywhere."),
     ]
@@ -240,8 +242,12 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            text.contains("g  enable lingering (user units keep running when you log out)"),
-            "help must explain linger in one brief parenthetical:\n{text}"
+            text.contains("loginctl enable-linger"),
+            "help must say how to enable linger:\n{text}"
+        );
+        assert!(
+            text.contains("loginctl disable-linger"),
+            "help must say how to disable linger:\n{text}"
         );
     }
 

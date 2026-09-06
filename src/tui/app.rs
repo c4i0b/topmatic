@@ -292,7 +292,6 @@ impl App {
                 }
                 'r' => self.run_now(),
                 'l' => self.open_logs(),
-                'g' => self.enable_linger(),
                 _ => {}
             },
             _ => {}
@@ -410,20 +409,6 @@ impl App {
     fn open_logs(&mut self) {
         if let Some(name) = self.selected_row().map(|row| row.name.clone()) {
             self.view = View::Logs(logs::LogsState::open(&self.paths, &name));
-        }
-    }
-
-    fn enable_linger(&mut self) {
-        match self.ctl.linger_enabled() {
-            Some(true) => self.message = "lingering already enabled".to_string(),
-            _ => match self.ctl.enable_linger() {
-                Ok(()) => self.message = "lingering enabled".to_string(),
-                Err(_) => {
-                    self.message =
-                        "could not enable lingering (no sudo involved); run: loginctl enable-linger"
-                            .to_string()
-                }
-            },
         }
     }
 }

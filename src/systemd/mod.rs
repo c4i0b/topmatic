@@ -23,7 +23,6 @@ pub trait SystemdCtl {
     fn next_run(&self, profile: &str) -> Option<DateTime<Utc>>;
     fn timer_active(&self, profile: &str) -> bool;
     fn linger_enabled(&self) -> Option<bool>;
-    fn enable_linger(&self) -> io::Result<()>;
 }
 
 pub struct RealSystemdCtl {
@@ -111,14 +110,6 @@ impl SystemdCtl for RealSystemdCtl {
             "no" => Some(false),
             _ => None,
         }
-    }
-
-    fn enable_linger(&self) -> io::Result<()> {
-        let user = std::env::var("USER")
-            .map_err(|_| io::Error::other("USER environment variable is not set"))?;
-        let mut command = Command::new("loginctl");
-        command.arg("enable-linger").arg(&user);
-        run_status(command)
     }
 }
 

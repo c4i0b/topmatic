@@ -18,6 +18,23 @@ echo "stub topgrade stderr" >&2
 exit "$(cat "$(dirname "$0")/exit.txt" 2>/dev/null || echo 0)"
 "#;
 
+const STUB_FLAKY_TOPGRADE: &str = r#"#!/bin/sh
+dir="$(dirname "$0")"
+count=$(( $(cat "$dir/count.txt" 2>/dev/null || echo 0) + 1 ))
+echo "$count" > "$dir/count.txt"
+pass_after="$(cat "$dir/pass_after.txt" 2>/dev/null || echo 1)"
+if [ "$count" -ge "$pass_after" ]; then
+  echo "stub topgrade recovered on attempt $count"
+  exit 0
+fi
+echo "stub topgrade failed on attempt $count" >&2
+exit 3
+"#;
+
+const STUB_NOTIFY_APPEND: &str = r#"#!/bin/sh
+printf '%s|%s\n' "$1" "$2" >> "$(dirname "$0")/notify.txt"
+"#;
+
 const STUB_NOTIFY: &str = r#"#!/bin/sh
 printf '%s|%s\n' "$1" "$2" > "$(dirname "$0")/notify.txt"
 "#;
@@ -54,6 +71,23 @@ impl Fixture {
 
     fn notify_send(&self) -> PathBuf {
         self.write_stub("notify-send", STUB_NOTIFY)
+    }
+
+    fn flaky_topgrade(&self, pass_after: u32) -> PathBuf {
+        self.write_stub("topgrade", STUB_FLAKY_TOPGRADE);
+        fs::write(self.bin_dir.join("pass_after.txt"), pass_after.to_string()).unwrap();
+        self.bin_dir.join("topgrade")
+    }
+
+    fn notify_send_append(&self) -> PathBuf {
+        self.write_stub("notify-send", STUB_NOTIFY_APPEND)
+    }
+
+    fn count(&self, name: &str) -> String {
+        fs::read_to_string(self.bin_dir.join(name))
+            .unwrap()
+            .trim()
+            .to_string()
     }
 
     fn set_exit_code(&self, code: &str) {
@@ -248,4 +282,106 @@ fn run_is_skipped_when_lock_is_already_held() {
         .unwrap()
         .expect("skip is recorded");
     assert!(status.skipped);
+}
+
+fn fast_policy(max_retries: u32) -> topmatic::runner::retry::RetryPolicy {
+    topmatic::runner::retry::RetryPolicy {
+        max_retries,
+        base_delay: std::time::Duration::from_millis(5),
+        delay_factor: 1,
+        budget: std::time::Duration::from_secs(30),
+        network_cap: std::time::Duration::from_millis(1),
+        poll: std::time::Duration::from_millis(1),
+    }
+}
+
+#[test]
+fn scheduled_run_retries_until_the_stub_recovers() {
+    let fixture = Fixture::new();
+    let topgrade = fixture.flaky_topgrade(3);
+    fixture.save_config(&[Fixture::profile("flaky", NotifyPolicy::OnFailure)]);
+    let notify = fixture.notify_send_append();
+
+    let outcome = runner::run_scheduled(
+        &fixture.stored_profile("flaky"),
+        &topgrade,
+        &fixture.paths,
+        &NotifySend::new(notify),
+        false,
+        &fast_policy(2),
+    )
+    .unwrap();
+
+    assert!(outcome.success);
+    assert_eq!(
+        fixture.count("count.txt"),
+        "3",
+        "two failures then recovery"
+    );
+    assert!(
+        fs::read_to_string(&outcome.log_path)
+            .unwrap()
+            .contains("recovered on attempt 3")
+    );
+    assert!(
+        !fixture.bin_dir.join("notify.txt").exists(),
+        "a recovered run must not notify"
+    );
+}
+
+#[test]
+fn scheduled_run_exhausts_retries_and_notifies_once() {
+    let fixture = Fixture::new();
+    let topgrade = fixture.flaky_topgrade(99);
+    fixture.save_config(&[Fixture::profile("doomed", NotifyPolicy::Always)]);
+    let notify = fixture.notify_send_append();
+
+    let outcome = runner::run_scheduled(
+        &fixture.stored_profile("doomed"),
+        &topgrade,
+        &fixture.paths,
+        &NotifySend::new(notify),
+        false,
+        &fast_policy(3),
+    )
+    .unwrap();
+
+    assert!(!outcome.success);
+    assert_eq!(outcome.exit_code, Some(3));
+    assert_eq!(
+        fixture.count("count.txt"),
+        "4",
+        "initial attempt plus three retries"
+    );
+    let notified = fs::read_to_string(fixture.bin_dir.join("notify.txt")).unwrap();
+    assert_eq!(
+        notified.matches("doomed FAILED").count(),
+        1,
+        "notification must wait for the final attempt"
+    );
+    assert!(notified.contains("exit code: 3"));
+
+    let status = runner::read_status(&fixture.paths, "doomed")
+        .unwrap()
+        .expect("status recorded");
+    assert!(!status.success);
+}
+
+#[test]
+fn plain_run_keeps_single_attempt_semantics() {
+    let fixture = Fixture::new();
+    let topgrade = fixture.flaky_topgrade(99);
+    fixture.save_config(&[Fixture::profile("once", NotifyPolicy::Never)]);
+
+    let outcome = runner::run(
+        &fixture.stored_profile("once"),
+        &topgrade,
+        &fixture.paths,
+        &NullNotify,
+        false,
+    )
+    .unwrap();
+
+    assert!(!outcome.success);
+    assert_eq!(fixture.count("count.txt"), "1");
 }

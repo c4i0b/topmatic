@@ -12,9 +12,12 @@ use crate::paths::Paths;
 
 pub mod notify;
 pub mod resolve;
+pub mod retry;
 pub mod topgrade_config;
 
 use notify::NotifyBackend;
+use retry::{RetryPolicy, run_with_retries, tcp_online, wait_online_or_cap};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunOutcome {
@@ -36,6 +39,24 @@ pub fn run(
     notify: &dyn NotifyBackend,
     dry_run: bool,
 ) -> anyhow::Result<RunOutcome> {
+    run_scheduled(
+        profile,
+        topgrade_bin,
+        paths,
+        notify,
+        dry_run,
+        &RetryPolicy::none(),
+    )
+}
+
+pub fn run_scheduled(
+    profile: &Profile,
+    topgrade_bin: &Path,
+    paths: &Paths,
+    notify: &dyn NotifyBackend,
+    dry_run: bool,
+    policy: &RetryPolicy,
+) -> anyhow::Result<RunOutcome> {
     fs::create_dir_all(&paths.config_dir)?;
     fs::create_dir_all(paths.state_dir.join("status"))?;
     fs::create_dir_all(paths.logs_dir(&profile.name))?;
@@ -54,7 +75,13 @@ pub fn run(
     let mut lock = fd_lock::RwLock::new(lock_file);
 
     let outcome = match lock.try_write() {
-        Ok(_guard) => execute(profile, topgrade_bin, paths, dry_run, started, &log_path),
+        Ok(_guard) => {
+            if dry_run || policy.max_retries == 0 {
+                execute(profile, topgrade_bin, paths, dry_run, started, &log_path)
+            } else {
+                run_with_policy(profile, topgrade_bin, paths, policy)
+            }
+        }
         Err(_) => RunOutcome {
             profile: profile.name.clone(),
             dry_run,
@@ -88,6 +115,42 @@ pub fn run(
     }
 
     Ok(outcome)
+}
+
+fn run_with_policy(
+    profile: &Profile,
+    topgrade_bin: &Path,
+    paths: &Paths,
+    policy: &RetryPolicy,
+) -> RunOutcome {
+    wait_online_or_cap(tcp_online, policy.network_cap, policy.poll);
+    let started = Instant::now();
+    let logs_dir = paths.logs_dir(&profile.name);
+    let mut last: Option<RunOutcome> = None;
+    run_with_retries(
+        policy,
+        || started.elapsed(),
+        |delay| wait_online_or_cap(tcp_online, delay, policy.poll),
+        || {
+            let attempt_started = Utc::now();
+            let log_path = logs_dir.join(format!(
+                "{}.log",
+                attempt_started.format("%Y%m%d-%H%M%S%.3f")
+            ));
+            let outcome = execute(
+                profile,
+                topgrade_bin,
+                paths,
+                false,
+                attempt_started,
+                &log_path,
+            );
+            let success = outcome.success;
+            last = Some(outcome);
+            success
+        },
+    );
+    last.expect("run_with_retries always attempts at least once")
 }
 
 fn execute(

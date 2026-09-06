@@ -64,28 +64,7 @@ pub fn reset(ctl: &dyn SystemdCtl, paths: &Paths, include_config: bool) -> Reset
 }
 
 fn unique_backup_path(config_file: &std::path::Path) -> std::path::PathBuf {
-    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S%.3f");
-    let mut candidate = config_file.with_file_name(format!(
-        "{}.bak-{}",
-        config_file
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy(),
-        timestamp
-    ));
-    let mut counter = 0u32;
-    while candidate.exists() {
-        counter += 1;
-        candidate = config_file.with_file_name(format!(
-            "{}.bak-{}-{counter}",
-            config_file
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy(),
-            timestamp
-        ));
-    }
-    candidate
+    crate::util::unique_sibling(config_file, "bak")
 }
 
 #[cfg(test)]

@@ -6,6 +6,10 @@ pub fn run() -> anyhow::Result<()> {
         std::fs::create_dir_all(&paths.config_dir)?;
         std::fs::write(paths.config_file(), crate::config::template())?;
     }
+    match crate::config::backup_copy(&paths) {
+        Ok(backup) => println!("backed up config to {}", backup.display()),
+        Err(error) => println!("warn: could not back up the config before editing: {error}"),
+    }
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
     let mut split = editor.split_whitespace();
     let program = split.next().unwrap_or("vi");

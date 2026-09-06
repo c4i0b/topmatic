@@ -30,7 +30,10 @@ enum Command {
     #[command(about = "Converge systemd units to the config, repairing drift")]
     Sync,
     #[command(about = "Diagnose the setup and auto-repair what sync can fix")]
-    Doctor,
+    Doctor {
+        #[arg(long, help = "Quarantine a broken config and write a fresh one")]
+        repair: bool,
+    },
     #[command(
         about = "Remove all topmatic units, state and schedules (config becomes .bak with --all)"
     )]
@@ -49,7 +52,7 @@ pub fn run() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Run { profile, dry_run }) => run::run(&profile, dry_run),
         Some(Command::Sync) => sync::run(),
-        Some(Command::Doctor) => doctor::run(),
+        Some(Command::Doctor { repair }) => doctor::run(repair),
         Some(Command::Reset { all }) => reset::run(all),
         Some(Command::List) => list::run(),
         Some(Command::Edit) => edit::run(),

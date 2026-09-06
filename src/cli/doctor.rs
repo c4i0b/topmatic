@@ -1,7 +1,7 @@
 use crate::paths::Paths;
 use crate::systemd::SystemdCtl;
 
-pub fn run() -> anyhow::Result<()> {
+pub fn run(repair: bool) -> anyhow::Result<()> {
     let paths = Paths::from_env();
     let path_env = std::env::var("PATH").unwrap_or_default();
     let mut failures = 0;
@@ -50,7 +50,36 @@ pub fn run() -> anyhow::Result<()> {
         None => println!("warn: linger state unknown"),
     }
 
-    let (config, issues) = crate::config::load_validated(&paths)?;
+    let (config, issues) = match crate::config::load_validated(&paths) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            println!("FAIL: {error:#}");
+            if let Some(backup) = crate::config::latest_backup(&paths) {
+                println!("info: latest backup at {}", backup.display());
+            }
+            if !repair {
+                println!("      run `topmatic doctor --repair` to quarantine it and start fresh");
+                std::process::exit(1);
+            }
+            match crate::config::repair_broken(&paths)? {
+                Some(quarantine) => {
+                    println!(
+                        "ok:   quarantined broken config to {}",
+                        quarantine.display()
+                    );
+                    println!(
+                        "ok:   wrote a fresh config at {} (profiles were NOT carried over)",
+                        paths.config_file().display()
+                    );
+                    println!(
+                        "      rebuild profiles in the TUI (n) or restore them from the quarantine"
+                    );
+                    return Ok(());
+                }
+                None => anyhow::bail!("config became readable again; nothing to repair"),
+            }
+        }
+    };
     let _ = crate::config::write_example_if_changed(&paths);
     for issue in &issues {
         failures += 1;

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -179,9 +180,59 @@ pub fn render_example() -> String {
             duration(defaults.random_delay),
             "   # run within this much of the schedule time, never exactly on it"
         ),
+        String::new(),
+        "# A profile picks the topgrade steps to update and how often.".to_string(),
+        "# [[profiles]]".to_string(),
+        "# name = \"daily\"".to_string(),
+        "# steps = [\"cargo\", \"flatpak\"]".to_string(),
+        "# [profiles.schedule]".to_string(),
+        "# preset = \"daily\"".to_string(),
+        "# hour = 0".to_string(),
+        "# minute = 0".to_string(),
+        String::new(),
+        "# Broken config? Run `topmatic doctor --repair`.".to_string(),
     ]
     .join("\n")
         + "\n"
+}
+
+pub fn backup_copy(paths: &Paths) -> std::io::Result<PathBuf> {
+    let source = paths.config_file();
+    let target = crate::util::unique_sibling(&source, "bak");
+    std::fs::copy(&source, &target)?;
+    Ok(target)
+}
+
+pub fn latest_backup(paths: &Paths) -> Option<PathBuf> {
+    let config_file = paths.config_file();
+    let dir = config_file.parent()?;
+    let prefix = format!("{}.bak-", config_file.file_name()?.to_string_lossy());
+    let mut backups: Vec<_> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .collect();
+    backups.sort();
+    backups.pop()
+}
+
+pub fn repair_broken(paths: &Paths) -> anyhow::Result<Option<PathBuf>> {
+    let source = paths.config_file();
+    if !source.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&source)?;
+    if toml::from_str::<toml::Value>(&text).is_ok() {
+        return Ok(None);
+    }
+    let quarantine = crate::util::unique_sibling(&source, "broken");
+    std::fs::rename(&source, &quarantine)?;
+    save(paths, &AppConfig::default())?;
+    Ok(Some(quarantine))
 }
 
 pub fn write_example_if_changed(paths: &Paths) -> std::io::Result<()> {
@@ -268,7 +319,12 @@ pub fn load_validated(paths: &Paths) -> anyhow::Result<(AppConfig, Vec<String>)>
         return Ok((AppConfig::default(), Vec::new()));
     }
     let text = std::fs::read_to_string(&path)?;
-    let value: toml::Value = toml::from_str(&text)?;
+    let value: toml::Value = toml::from_str(&text).map_err(|error| {
+        anyhow::anyhow!(
+            "invalid config at {}: {error} — run `topmatic doctor --repair` to quarantine it and start fresh",
+            path.display()
+        )
+    })?;
     let mut config = AppConfig::default();
     let mut issues = Vec::new();
     if let Some(raw) = value.get("defaults") {
@@ -598,6 +654,77 @@ mod tests {
             120,
             "explicit profile values win over the global default"
         );
+    }
+
+    #[test]
+    fn broken_config_error_points_at_doctor_repair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(paths.config_file(), "[[profiles]\nbroken").unwrap();
+
+        let error = load_validated(&paths).unwrap_err().to_string();
+        assert!(error.contains("invalid config at"));
+        assert!(error.contains("doctor --repair"));
+    }
+
+    #[test]
+    fn repair_quarantines_broken_and_writes_a_fresh_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(paths.config_file(), "definitely not [ toml").unwrap();
+
+        let quarantine = repair_broken(&paths)
+            .unwrap()
+            .expect("broken file quarantined");
+        assert!(quarantine.is_file(), "the broken original is preserved");
+        assert!(
+            quarantine
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("config.toml.broken-")
+        );
+        let (config, issues) = load_validated(&paths).unwrap();
+        assert_eq!(config, AppConfig::default());
+        assert!(issues.is_empty());
+        assert!(paths.example_config_file().is_file());
+
+        assert_eq!(
+            repair_broken(&paths).unwrap(),
+            None,
+            "a valid config is left alone"
+        );
+    }
+
+    #[test]
+    fn backup_copy_snapshots_before_editing_and_latest_backup_finds_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(paths.config_file(), "current").unwrap();
+
+        let backup = backup_copy(&paths).unwrap();
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "current");
+        assert_eq!(latest_backup(&paths).as_deref(), Some(backup.as_path()));
+        assert!(
+            paths.config_file().is_file(),
+            "the original stays for the editor"
+        );
+    }
+
+    #[test]
+    fn example_profiles_skeleton_is_valid_when_uncommented() {
+        let skeleton: String = render_example()
+            .lines()
+            .filter(|line| line.starts_with("# [["))
+            .map(|line| line.trim_start_matches("# ").to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(skeleton.contains("[[profiles]]"));
+        let parsed: toml::Value = toml::from_str(&skeleton).unwrap();
+        assert!(parsed.get("profiles").is_some_and(|p| p.is_array()));
     }
 
     #[test]

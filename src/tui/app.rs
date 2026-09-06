@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
@@ -23,10 +23,20 @@ use super::presets;
 use super::views;
 
 const MESSAGE_TTL_TICKS: u64 = 25;
+const MIN_LOADING_TIME: Duration = Duration::from_millis(120);
 
 pub struct ResolvedBins {
     topmatic_bin: PathBuf,
     topgrade_bin: Option<PathBuf>,
+}
+
+impl ResolvedBins {
+    pub fn new(topmatic_bin: PathBuf, topgrade_bin: Option<PathBuf>) -> Self {
+        Self {
+            topmatic_bin,
+            topgrade_bin,
+        }
+    }
 }
 
 pub struct BackgroundJob {
@@ -49,6 +59,7 @@ pub struct App {
     pub topgrade_bin: Option<PathBuf>,
     pub catalog: Vec<String>,
     pub in_flight: Option<BackgroundJob>,
+    pending_follow: Option<String>,
     pub view: View,
     pub selected: usize,
     pub list_scroll: u16,
@@ -133,6 +144,7 @@ impl App {
             topgrade_bin,
             catalog: Vec::new(),
             in_flight: None,
+            pending_follow: None,
             view: View::Dashboard,
             selected: 0,
             list_scroll: 0,
@@ -284,11 +296,20 @@ impl App {
             self.in_flight = Some(job);
             return false;
         };
+        if job.started.elapsed() < MIN_LOADING_TIME {
+            job.shared.lock().unwrap().replace(outcome);
+            self.in_flight = Some(job);
+            return false;
+        }
         match outcome {
-            JobOutcome::Success(action) => self.log(ActivityKind::Action, action),
+            JobOutcome::Success(action) => {
+                self.log(ActivityKind::Action, action);
+                self.run_after_result();
+            }
             JobOutcome::Error(message) => {
                 self.log(ActivityKind::Error, message.clone());
                 self.message = message;
+                self.pending_follow = None;
             }
         }
         self.rebuild_rows();
@@ -715,29 +736,36 @@ impl App {
         let Some(name) = self.selected_row().map(|row| row.name.clone()) else {
             return;
         };
-        match self.ctl.start_service(&name) {
-            Ok(()) => {
-                self.log(ActivityKind::Action, format!("started {name}"));
-                self.rebuild_rows();
-                self.view = View::Logs(logs::LogsState::follow(&name));
+        self.log(ActivityKind::Action, format!("starting {name}"));
+        let ctl = (self.controller_factory)();
+        let name_for_job = name.clone();
+        self.spawn_background(format!("starting {name}"), move || {
+            match ctl.start_service(&name_for_job) {
+                Ok(()) => JobOutcome::Success(format!("started {name_for_job}")),
+                Err(error) => JobOutcome::Error(format!("start failed: {error}")),
             }
-            Err(error) => {
-                let detail = format!("start failed: {error}");
-                self.message.clone_from(&detail);
-                self.log(ActivityKind::Error, detail);
-            }
-        }
+        });
+        self.pending_follow = Some(name);
+    }
+
+    fn run_after_result(&mut self) {
+        let Some(name) = self.pending_follow.take() else {
+            return;
+        };
+        self.rebuild_rows();
+        self.view = View::Logs(logs::LogsState::follow(&name));
     }
 
     fn stop_run(&mut self, profile: &str) {
-        match self.ctl.stop_service(profile) {
-            Ok(()) => self.log(ActivityKind::Action, format!("stopped {profile}")),
-            Err(error) => {
-                let detail = format!("stop failed: {error}");
-                self.message.clone_from(&detail);
-                self.log(ActivityKind::Error, detail);
+        self.log(ActivityKind::Action, format!("stopping {profile}"));
+        let ctl = (self.controller_factory)();
+        let name = profile.to_string();
+        self.spawn_background(format!("stopping {name}"), move || {
+            match ctl.stop_service(&name) {
+                Ok(()) => JobOutcome::Success(format!("stopped {name}")),
+                Err(error) => JobOutcome::Error(format!("stop failed: {error}")),
             }
-        }
+        });
     }
 
     fn open_logs(&mut self) {
@@ -1197,6 +1225,7 @@ mod tests {
     fn message_feedback_expires_after_the_ttl_while_activity_is_kept() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
         assert!(
             harness
                 .action_texts()
@@ -1308,9 +1337,21 @@ mod tests {
     }
 
     #[test]
-    fn run_now_starts_the_service_through_the_manager() {
+    fn run_now_shows_loading_then_starts_the_service_through_the_manager() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        assert!(
+            app.in_flight.is_some(),
+            "run defers the start behind busy feedback"
+        );
+        assert!(
+            app.in_flight
+                .as_ref()
+                .is_some_and(|job| job.label.contains("starting all-daily")),
+            "the busy indicator carries the running label: {:?}",
+            app.in_flight.as_ref().map(|job| job.label.clone())
+        );
+        settle(&mut app);
         assert!(
             harness
                 .action_texts()
@@ -1363,6 +1404,7 @@ mod tests {
     fn live_snapshot_gathers_running_and_status_in_one_read() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
         write_status(&app.paths, "all-daily", true, 0);
 
         let snap = app.live_snapshot("all-daily");
@@ -1377,6 +1419,7 @@ mod tests {
     fn live_view_backgrounds_with_escape_and_run_keeps_going() {
         let (mut app, _harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
         app.handle_key(key(KeyCode::Esc));
         assert!(matches!(app.view, View::Dashboard));
         assert!(app.rows[0].running, "backgrounding keeps the run alive");
@@ -1386,14 +1429,22 @@ mod tests {
     fn live_view_x_stops_the_run_on_demand() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
+        let before = harness.action_texts().len();
         app.handle_key(key(KeyCode::Char('x')));
+        assert!(
+            app.in_flight.is_some(),
+            "stop is deferred behind busy feedback"
+        );
+        settle(&mut app);
         assert!(
             harness
                 .action_texts()
                 .iter()
+                .skip(before)
                 .any(|text| text.contains("stopped all-daily")),
             "x records the stop: {:?}",
-            harness.action_texts()
+            &harness.action_texts()[before..]
         );
         assert!(
             harness
@@ -1402,7 +1453,6 @@ mod tests {
                 .unwrap()
                 .contains(&"stop:all-daily".to_string())
         );
-        app.on_tick();
         assert!(!app.rows[0].running);
     }
 
@@ -1410,6 +1460,7 @@ mod tests {
     fn tick_reports_when_a_followed_run_finishes_ok() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
         harness.services.lock().unwrap().remove("all-daily");
         write_status(&app.paths, "all-daily", true, 0);
         app.on_tick();
@@ -1432,6 +1483,7 @@ mod tests {
     fn tick_reports_a_failed_run_with_its_exit_code() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
         harness.services.lock().unwrap().remove("all-daily");
         write_status(&app.paths, "all-daily", false, 3);
         app.on_tick();
@@ -1450,6 +1502,7 @@ mod tests {
     fn tick_without_changes_does_not_resend_the_finish_message() {
         let (mut app, harness) = harness(&[profile("all-daily")]);
         app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
         harness.services.lock().unwrap().remove("all-daily");
         app.on_tick();
         let count = |all: &[String]| all.iter().filter(|t| t.contains("finished ok")).count();
@@ -1481,6 +1534,34 @@ mod tests {
         app.handle_key(key(KeyCode::Esc));
         app.handle_key(key(KeyCode::Char('q')));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn loading_stays_visible_for_the_minimum_duration_before_clearing() {
+        let (mut app, _harness) = harness(&[]);
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(Some(JobOutcome::Success(
+            "done".into(),
+        ))));
+        app.in_flight = Some(BackgroundJob {
+            label: "saving x".to_string(),
+            started: std::time::Instant::now(),
+            shared,
+        });
+        assert!(
+            !app.poll_in_flight(),
+            "a too-quick job is not finalizable yet"
+        );
+        assert!(
+            app.in_flight.is_some(),
+            "the spinner stays up for the minimum perceivable duration"
+        );
+        app.in_flight.as_mut().unwrap().started =
+            std::time::Instant::now() - std::time::Duration::from_secs(1);
+        assert!(
+            app.poll_in_flight(),
+            "the spinner clears after the minimum duration"
+        );
+        assert!(app.in_flight.is_none());
     }
 
     fn mouse(

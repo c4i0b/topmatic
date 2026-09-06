@@ -106,8 +106,8 @@ fn draw_header(app: &App, frame: &mut Frame, area: Rect) {
 
 fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
     let hints = footer_hints(&app.view, app.filter.active);
-    let prefix = if app.filter.active {
-        Some((format!(" /{}", app.filter.text()), Color::Yellow))
+    let prefix = if let Some(active_filter) = active_filter(app) {
+        Some((format!(" /{}", active_filter), Color::Yellow))
     } else if let Some(job) = &app.in_flight {
         in_flight_prefix(job)
     } else if !app.message.is_empty() {
@@ -161,6 +161,18 @@ pub(crate) fn in_flight_prefix(job: &super::app::BackgroundJob) -> Option<(Strin
 
 pub(crate) fn activity_prefix(entry: &ActivityEntry) -> Option<(String, Color)> {
     Some((format!(" {} ", entry.text), activity_color(entry.kind)))
+}
+
+fn active_filter(app: &App) -> Option<String> {
+    if app.filter.active {
+        return Some(app.filter.text().to_string());
+    }
+    if let View::Editor(state) = &app.view
+        && state.steps_filter.active
+    {
+        return Some(state.steps_filter.text().to_string());
+    }
+    None
 }
 
 pub(crate) fn activity_color(kind: ActivityKind) -> Color {
@@ -237,9 +249,7 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
         View::Dashboard => {
             "L activity  / filter  n new  e edit  d delete  r run now  l logs  ? help  q quit"
         }
-        View::Editor(_) => {
-            "↑↓ move  enter edit/save  tab section  / filter steps  esc back  q quit"
-        }
+        View::Editor(_) => "↑↓ move  enter edit/save  tab section  esc back  q quit",
         View::PresetPicker { .. } => "enter choose  esc back  q quit",
         View::Logs(state) if state.follow => "x stop  esc background  q quit",
         View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
@@ -436,6 +446,7 @@ pub(crate) fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
 mod tests {
     use super::*;
     use crate::tui::editor::EditorState;
+    use crate::tui::input::FilterState;
 
     #[test]
     fn activity_prefix_styles_each_kind_with_trailing_space() {
@@ -589,12 +600,71 @@ mod tests {
             )
             .contains("enter edit/save")
         );
+        assert!(
+            !footer_hints(
+                &View::Editor(Box::new(EditorState::new(
+                    None,
+                    Vec::new(),
+                    crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC
+                )),),
+                false
+            )
+            .contains("/ filter steps"),
+            "the editor hint no longer advertises '/ filter'"
+        );
         assert!(footer_hints(&View::Dashboard, false).contains("q quit"));
         assert!(
             footer_hints(&View::Logs(crate::tui::logs::LogsState::follow("x")), false)
                 .contains("x stop")
         );
         assert!(footer_hints(&View::Dashboard, true).starts_with("filter"));
+    }
+
+    #[test]
+    fn active_filter_reports_dashboard_and_editor_steps_queries() {
+        let (mut app, _tmp) = test_harness();
+        assert_eq!(active_filter(&app), None, "no active filter shows nothing");
+        app.filter.start();
+        app.filter.edit.value = "ca".to_string();
+        assert_eq!(active_filter(&app).as_deref(), Some("ca"));
+
+        let mut state = EditorState::new(
+            None,
+            vec!["cargo".to_string()],
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        state.steps_filter.start();
+        state.steps_filter.edit.value = "flat".to_string();
+        app.view = View::Editor(Box::new(state));
+        app.filter = FilterState::new();
+        assert_eq!(
+            active_filter(&app).as_deref(),
+            Some("flat"),
+            "an engaged steps filter surfaces its query in the footer"
+        );
+    }
+
+    fn test_harness() -> (crate::tui::app::App, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths =
+            crate::paths::Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let ctl = crate::systemd::test_support::FakeCtl::new(tmp.path().join("units"));
+        let app = crate::tui::app::App::assemble(
+            crate::config::AppConfig::default(),
+            Vec::new(),
+            paths,
+            Box::new(ctl),
+            Box::new(|| {
+                Box::new(crate::systemd::test_support::FakeCtl::new(
+                    std::path::PathBuf::from("/nonexistent"),
+                ))
+            }),
+            std::sync::Arc::new(std::sync::Mutex::new(
+                crate::activity::ActivityLog::in_memory(4),
+            )),
+            crate::tui::app::ResolvedBins::new(std::path::PathBuf::from("/bin/topmatic"), None),
+        );
+        (app, tmp)
     }
 
     #[test]

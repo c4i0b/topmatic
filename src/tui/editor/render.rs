@@ -16,19 +16,23 @@ impl EditorState {
             self.steps_window().0 + 1
         };
         let filter_label = if self.steps_filter.active {
-            format!("filter: {}▏", self.steps_filter.text())
+            format!(" filter: {}▏", self.steps_filter.text())
         } else {
-            "/ filter".to_string()
+            String::new()
         };
         Line::from(vec![
             focus_marker(self.section == Section::Steps),
-            Span::raw(format!(
-                " steps (selected: {}) [{}-{}/{}] {filter_label}",
-                self.selected_steps.len(),
-                display_first,
-                self.steps_window().1,
-                steps_total,
-            )),
+            Span::styled(
+                format!(
+                    "steps (selected: {}) [{}-{}/{}]{}",
+                    self.selected_steps.len(),
+                    display_first,
+                    self.steps_window().1,
+                    steps_total,
+                    filter_label,
+                ),
+                Style::new().fg(Color::Cyan),
+            ),
         ])
     }
 
@@ -236,7 +240,7 @@ mod tests {
             .map(|span| span.content.clone())
             .collect();
         assert_eq!(
-            text, "▸ steps (selected: 162) [1-10/162] / filter",
+            text, "▸steps (selected: 162) [1-10/162]",
             "the screenshot steps line renders exactly this text, nothing more"
         );
     }
@@ -293,5 +297,22 @@ mod tests {
         };
         assert_no_split(40);
         assert_no_split(119);
+    }
+
+    #[test]
+    fn steps_header_shows_the_filter_query_only_while_filtering() {
+        let mut editor = editing_editor();
+        let idle = line_text(&editor.steps_header());
+        assert!(
+            !idle.contains("filter"),
+            "no filter suffix when not filtering: {idle:?}"
+        );
+        editor.steps_filter.start();
+        editor.steps_filter.edit.value = "flat".to_string();
+        let filtered = line_text(&editor.steps_header());
+        assert!(
+            filtered.contains("filter: flat▏"),
+            "the engaged filter shows its query: {filtered:?}"
+        );
     }
 }

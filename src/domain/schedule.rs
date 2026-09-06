@@ -88,7 +88,7 @@ impl SchedulePreset {
     }
 }
 
-pub const DEFAULT_DELAY_SEC: u64 = 1_800;
+pub const DEFAULT_DELAY_SEC: u64 = 300;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Schedule {
@@ -218,7 +218,7 @@ mod tests {
     fn default_schedule_is_daily_anchor_with_jitter() {
         let schedule = Schedule::default();
         assert_eq!(schedule.preset.on_calendar(), "*-*-* 00:00:00");
-        assert_eq!(schedule.randomized_delay_sec, 1_800);
+        assert_eq!(schedule.randomized_delay_sec, 300);
     }
 
     #[test]
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn legacy_spround_round_trips_from_old_config() {
-        let text = "preset = \"spread\"\nperiod = \"daily\"\nrandomized_delay_sec = 1800";
+        let text = "preset = \"spread\"\nperiod = \"daily\"\nrandomized_delay_sec = 300";
         let schedule: Schedule = toml::from_str(text).unwrap();
         assert!(matches!(
             schedule.preset,

@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(profile.steps, vec!["cargo", "flatpak"]);
         assert_eq!(profile.notify, NotifyPolicy::OnFailure);
         assert_eq!(profile.schedule.preset.on_calendar(), "*-*-* 00:00:00");
-        assert_eq!(profile.schedule.randomized_delay_sec, 1_800);
+        assert_eq!(profile.schedule.randomized_delay_sec, 300);
     }
 
     #[test]

@@ -293,7 +293,6 @@ impl App {
                 'r' => self.run_now(),
                 'l' => self.open_logs(),
                 'g' => self.enable_linger(),
-                's' => self.resync(),
                 _ => {}
             },
             _ => {}
@@ -426,18 +425,6 @@ impl App {
                 }
             },
         }
-    }
-
-    fn resync(&mut self) {
-        let report = systemd_sync::sync(&self.config, &self.topmatic_bin, &self.ctl);
-        self.message = if report.errors.is_empty() && report.is_clean() {
-            "already in sync".to_string()
-        } else if report.errors.is_empty() {
-            "synced".to_string()
-        } else {
-            format!("sync errors: {}", report.errors.join("; "))
-        };
-        self.rebuild_rows();
     }
 }
 

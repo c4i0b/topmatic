@@ -110,7 +110,7 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
     }
     match view {
         View::Dashboard => {
-            "/ filter  n new  e edit  d delete  r run now  l logs  g linger  s resync  ? help  q quit"
+            "/ filter  n new  e edit  d delete  r run now  l logs  g linger  ? help  q quit"
         }
         View::Editor(_) => {
             "↑↓ move  enter edit/save  tab section  / filter steps  esc back  q quit"
@@ -204,7 +204,7 @@ pub(crate) fn help_lines() -> Vec<Line<'static>> {
         Line::from(
             "l  browse run logs            g  enable lingering (user units keep running when you log out)",
         ),
-        Line::from("s  resync units               /  filter profiles"),
+        Line::from("/  filter profiles                     ?  this help"),
         Line::from(""),
         Line::from("editor: tab switches section, enter acts on the highlighted row,"),
         Line::from("the save row asks the name and saves; enter confirms popups, esc cancels"),

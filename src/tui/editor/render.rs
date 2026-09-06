@@ -91,10 +91,7 @@ impl EditorState {
         let focus_schedule = self.section == Section::Schedule;
         lines.push(Line::from(vec![
             focus_marker(focus_schedule),
-            Span::styled(
-                format!("schedule: {}", self.schedule.summary()),
-                Style::new().fg(Color::Cyan),
-            ),
+            Span::styled("schedule", Style::new().fg(Color::Cyan)),
         ]));
         for (row_index, row) in self.schedule_rows().iter().enumerate() {
             let cursor = focus_schedule && row_index == self.schedule_index;
@@ -235,7 +232,13 @@ mod tests {
             !joined.contains("all-daily"),
             "the name is confirmed in its own popup, not the save row"
         );
-        assert!(joined.contains("schedule: weekly Mon"));
+        let schedule_header = row_position("schedule");
+        assert!(
+            text[schedule_header].trim() == "schedule",
+            "the schedule header carries no selected option: {:?}",
+            text[schedule_header]
+        );
+        assert!(joined.contains("preset: weekly Mon"));
         assert!(joined.contains("notify: on failure"));
         assert!(joined.contains("missed runs catch up on next boot"));
     }

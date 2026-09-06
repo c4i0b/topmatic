@@ -473,7 +473,7 @@ impl App {
         let profile_name = profile.name.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let result = runner::run(&profile, &topgrade, &paths, &NullNotify, true)
+            let result = runner::run(&profile, &topgrade, &paths, &NullNotify, true, true)
                 .map_err(|error| error.to_string());
             let _ = tx.send(result);
         });
@@ -644,29 +644,9 @@ impl App {
         let inner_height = area.height.saturating_sub(2) as usize;
 
         let mut lines: Vec<Line> = Vec::new();
-        let focus_steps = state.section == editor::Section::Steps;
-        let steps_total = state.filtered_steps().len();
-        let filter_label = if state.steps_filter.active {
-            format!("filter: {}▏", state.steps_filter.text())
-        } else {
-            "/ filter".to_string()
-        };
-        lines.push(Line::from(vec![
-            focus_marker(focus_steps),
-            Span::raw(format!(
-                " steps (selected: {}) [{}-{}/{}] {}",
-                state.selected_steps.len(),
-                if steps_total == 0 {
-                    0
-                } else {
-                    state.steps_window().0 + 1
-                },
-                state.steps_window().1,
-                steps_total,
-                filter_label
-            )),
-        ]));
+        lines.push(state.steps_header());
         let (steps_start, steps_end) = state.steps_window();
+        let focus_steps = state.section == editor::Section::Steps;
         for (offset, id) in state.filtered_steps()[steps_start..steps_end]
             .iter()
             .enumerate()
@@ -752,57 +732,9 @@ impl App {
             focus_marker(focus_options),
             Span::styled("options", Style::new().fg(Color::Cyan)),
         ]));
-        lines.push(Line::from(format!(
-            "{}cleanup:  {}yes{}  {}no{}",
-            if focus_options && state.option_index == 0 {
-                "▶ "
-            } else {
-                "  "
-            },
-            if state.cleanup { "[" } else { " " },
-            if state.cleanup { "]" } else { " " },
-            if !state.cleanup { "[" } else { " " },
-            if !state.cleanup { "]" } else { " " },
-        )));
-        let notify = state.notify;
-        lines.push(Line::from(format!(
-            "{}notify:   {}always{}  {}on failure{}  {}never{}",
-            if focus_options && state.option_index == 1 {
-                "▶ "
-            } else {
-                "  "
-            },
-            if notify == crate::domain::profile::NotifyPolicy::Always {
-                "["
-            } else {
-                " "
-            },
-            if notify == crate::domain::profile::NotifyPolicy::Always {
-                "]"
-            } else {
-                " "
-            },
-            if notify == crate::domain::profile::NotifyPolicy::OnFailure {
-                "["
-            } else {
-                " "
-            },
-            if notify == crate::domain::profile::NotifyPolicy::OnFailure {
-                "]"
-            } else {
-                " "
-            },
-            if notify == crate::domain::profile::NotifyPolicy::Never {
-                "["
-            } else {
-                " "
-            },
-            if notify == crate::domain::profile::NotifyPolicy::Never {
-                "]"
-            } else {
-                " "
-            },
-        )));
+        let (cleanup_row, notify_row) = state.options_rows(focus_options, state.option_index);
+        lines.push(Line::from(cleanup_row));
+        lines.push(Line::from(notify_row));
 
         let _ = inner_height;
         let paragraph = Paragraph::new(lines).block(Block::bordered().title(title));
@@ -829,24 +761,9 @@ impl App {
     }
 
     fn draw_help(&self, frame: &mut Frame, area: Rect) {
-        let text = vec![
-            Line::from("topmatic help"),
-            Line::from(""),
-            Line::from("n  new profile (presets)      e  edit profile      d  delete profile"),
-            Line::from("r  run now via systemd        t  dry-run test"),
-            Line::from("l  browse run logs            g  enable lingering"),
-            Line::from("s  resync units               /  filter profiles"),
-            Line::from(""),
-            Line::from("editor: tab switches section, enter asks the name and saves,"),
-            Line::from("space or arrows pick choices, / filters steps, esc cancels, q quits"),
-            Line::from(""),
-            Line::from(
-                "Config: ~/.config/topmatic/config.toml (source of truth, editable by hand)",
-            ),
-            Line::from("topgrade runs fully isolated with its own config; no sudo anywhere."),
-        ];
         frame.render_widget(
-            Paragraph::new(text).block(Block::bordered().title("help (? or any key closes)")),
+            Paragraph::new(help_lines())
+                .block(Block::bordered().title("help (? or any key closes)")),
             area,
         );
     }
@@ -897,7 +814,7 @@ fn state_rows_count(state: &editor::EditorState) -> usize {
     let choices = crate::domain::schedule::quick_choices().len();
     choices + 1 + schedule_context_lines(state).len() + 1
 }
-fn focus_marker(focused: bool) -> Span<'static> {
+pub(crate) fn focus_marker(focused: bool) -> Span<'static> {
     if focused {
         Span::styled(
             "▸",
@@ -917,5 +834,54 @@ fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
         y: area.y + (area.height.saturating_sub(popup_height)) / 2,
         width: popup_width,
         height: popup_height,
+    }
+}
+
+pub(crate) fn help_lines() -> Vec<Line<'static>> {
+    vec![
+        Line::from("topmatic help"),
+        Line::from(""),
+        Line::from("n  new profile (presets)      e  edit profile      d  delete profile"),
+        Line::from("r  run now via systemd        t  dry-run test"),
+        Line::from(
+            "l  browse run logs            g  enable lingering (user units keep running when you log out)",
+        ),
+        Line::from("s  resync units               /  filter profiles"),
+        Line::from(""),
+        Line::from("editor: tab switches section, enter asks the name and saves,"),
+        Line::from("space or arrows pick choices, / filters steps, esc cancels, q quits"),
+        Line::from(""),
+        Line::from("Config: ~/.config/topmatic/config.toml (source of truth, editable by hand)"),
+        Line::from("topgrade runs fully isolated with its own config; no sudo anywhere."),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_fits_a_compact_terminal() {
+        for line in help_lines() {
+            let width = line.width();
+            let text: String = line.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                width <= 110 || text.chars().count() > 110,
+                "help line overflows at 110 cols: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn help_explains_what_lingering_is_for() {
+        let text: String = help_lines()
+            .iter()
+            .flat_map(|line| line.iter().map(|s| s.content.as_ref()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("g  enable lingering (user units keep running when you log out)"),
+            "help must explain linger in one brief parenthetical:\n{text}"
+        );
     }
 }

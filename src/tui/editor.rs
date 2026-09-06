@@ -7,6 +7,7 @@ use crate::domain::schedule::{Schedule, SchedulePreset, Weekday, quick_choices};
 use crate::systemd::validate_on_calendar;
 
 use super::input::{FilterState, LineEdit};
+use ratatui::text::{Line, Span};
 
 pub const STEPS_VISIBLE: usize = 10;
 
@@ -142,6 +143,66 @@ impl EditorState {
             .as_ref()
             .map(|edit| edit.value.trim().to_string())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn steps_header(&self) -> Line<'static> {
+        let steps_total = self.filtered_steps().len();
+        let display_first = if steps_total == 0 {
+            0
+        } else {
+            self.steps_window().0 + 1
+        };
+        let filter_label = if self.steps_filter.active {
+            format!("filter: {}▏", self.steps_filter.text())
+        } else {
+            "/ filter".to_string()
+        };
+        Line::from(vec![
+            super::focus_marker(self.section == Section::Steps),
+            Span::raw(format!(
+                " steps (selected: {}) [{}-{}/{}] {filter_label}",
+                self.selected_steps.len(),
+                display_first,
+                self.steps_window().1,
+                steps_total,
+            )),
+        ])
+    }
+
+    pub(crate) fn options_rows(
+        &self,
+        section_focused: bool,
+        option_index: usize,
+    ) -> (String, String) {
+        let marker = |index: usize| {
+            if section_focused && option_index == index {
+                "▶ "
+            } else {
+                "  "
+            }
+        };
+        let cell = |picked: bool, label: &str| {
+            format!(
+                "{}{label}{}",
+                if picked { "[" } else { " " },
+                if picked { "]" } else { " " }
+            )
+        };
+        (
+            format!(
+                "{}cleanup:  {:<12}  {:<12}",
+                marker(0),
+                cell(self.cleanup, "yes"),
+                cell(!self.cleanup, "no"),
+            ),
+            format!(
+                "{}notify:   {:<12}  {:<12}  {:<12}",
+                marker(1),
+                cell(self.notify == NotifyPolicy::Always, "always"),
+                cell(self.notify == NotifyPolicy::OnFailure, "on failure"),
+                cell(self.notify == NotifyPolicy::Never, "never"),
+            ),
+        )
     }
 
     pub fn to_profile(&self, name: &str) -> Result<Profile, String> {
@@ -786,5 +847,90 @@ mod tests {
         assert!(editor.selected_steps.contains("flatpak"));
         editor.handle_key(key(KeyCode::Char(' ')));
         assert!(!editor.selected_steps.contains("flatpak"));
+    }
+
+    #[test]
+    fn options_rows_share_value_columns() {
+        let mut editor = new_editor();
+        editor.section = Section::Options;
+        editor.option_index = 1;
+        let (cleanup, notify) = editor.options_rows(true, 1);
+
+        let char_col = |hay: &str, needle: &str| {
+            hay.match_indices(needle)
+                .next()
+                .map(|(i, _)| hay[..i].chars().count())
+                .unwrap_or_else(|| panic!("{needle:?} missing from {hay:?}"))
+        };
+        assert_eq!(char_col(&cleanup, "yes"), char_col(&notify, "always"));
+        assert_eq!(char_col(&cleanup, "no"), char_col(&notify, "on failure"));
+        assert_eq!(char_col(&cleanup, "yes"), 13);
+        assert_eq!(char_col(&cleanup, "no"), 27);
+        assert_eq!(char_col(&notify, "never"), 41);
+    }
+
+    #[test]
+    fn editor_tape_golden_steps_header_is_exactly_the_documented_line() {
+        let catalog: Vec<String> = (0..162).map(|i| format!("step_{i}")).collect();
+        let editor = EditorState::from_preset(catalog.clone(), catalog, "all-daily");
+
+        let text: String = editor
+            .steps_header()
+            .iter()
+            .map(|span| span.content.clone())
+            .collect();
+        assert_eq!(
+            text, "▸ steps (selected: 162) [1-10/162] / filter",
+            "the screenshot steps line renders exactly this text, nothing more"
+        );
+    }
+
+    #[test]
+    fn editor_tape_golden_steps_header_never_splits_a_token() {
+        let catalog: Vec<String> = (0..162).map(|i| format!("step_{i}")).collect();
+        let editor = EditorState::from_preset(catalog.clone(), catalog, "all-daily");
+        let golden = editor
+            .steps_header()
+            .iter()
+            .map(|span| span.content.clone())
+            .collect::<String>();
+
+        use ratatui::{
+            Terminal,
+            backend::TestBackend,
+            widgets::{Block, Paragraph, Wrap},
+        };
+        let assert_no_split = |width: u16| {
+            let mut terminal = Terminal::new(TestBackend::new(width, 8)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let area = frame.area();
+                    let paragraph = Paragraph::new(editor.steps_header())
+                        .block(Block::bordered().title("edit profile"))
+                        .wrap(Wrap { trim: true });
+                    frame.render_widget(paragraph, area);
+                })
+                .unwrap();
+            let rows = terminal
+                .backend()
+                .buffer()
+                .content()
+                .chunks(width as usize)
+                .map(|cells| cells.iter().map(|c| c.symbol()).collect::<String>())
+                .collect::<Vec<_>>();
+            for word in golden.split_ascii_whitespace() {
+                assert!(
+                    rows.iter().any(|row| row.contains(word)),
+                    "word {word:?} is split across rows by the editor steps header:\n{}",
+                    rows.join("\n")
+                );
+            }
+            assert!(
+                !rows.join("\n").contains("ignoring"),
+                "no stray garbage in the steps header render"
+            );
+        };
+        assert_no_split(40);
+        assert_no_split(119);
     }
 }

@@ -1,9 +1,13 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::profile::Profile;
+use super::overlay::ResolvedSteps;
 
-pub fn topgrade_argv(profile: &Profile, topgrade_config: &Path, dry_run: bool) -> Vec<OsString> {
+pub fn topgrade_argv(
+    steps: &ResolvedSteps,
+    topgrade_config: &Path,
+    dry_run: bool,
+) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec![
         "topgrade".into(),
         "--config".into(),
@@ -17,9 +21,11 @@ pub fn topgrade_argv(profile: &Profile, topgrade_config: &Path, dry_run: bool) -
     }
     argv.push("--log-filter".into());
     argv.push("info".into());
-    if !profile.steps.is_empty() {
+    if let ResolvedSteps::Explicit(steps) = steps
+        && !steps.is_empty()
+    {
         argv.push("--only".into());
-        argv.extend(profile.steps.iter().map(|s| s.as_str().into()));
+        argv.extend(steps.iter().map(|s| s.as_str().into()));
     }
     argv
 }
@@ -27,20 +33,10 @@ pub fn topgrade_argv(profile: &Profile, topgrade_config: &Path, dry_run: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::profile::NotifyPolicy;
-    use crate::domain::schedule::Schedule;
+    use crate::domain::overlay::ResolvedSteps;
 
-    fn profile(steps: &[&str]) -> Profile {
-        Profile {
-            name: "flatpak-daily".to_string(),
-            base: None,
-            extra_steps: Vec::new(),
-            excluded_steps: Vec::new(),
-            steps: steps.iter().map(|s| s.to_string()).collect(),
-            schedule: Schedule::default(),
-            notify: NotifyPolicy::default(),
-            scope: Default::default(),
-        }
+    fn explicit(steps: &[&str]) -> ResolvedSteps {
+        ResolvedSteps::Explicit(steps.iter().map(|s| s.to_string()).collect())
     }
 
     fn strings(argv: &[OsString]) -> Vec<String> {
@@ -52,7 +48,7 @@ mod tests {
     #[test]
     fn composes_config_dry_run_and_steps() {
         let argv = topgrade_argv(
-            &profile(&["flatpak", "cargo"]),
+            &explicit(&["flatpak", "cargo"]),
             Path::new("/cfg/topgrade.toml"),
             true,
         );
@@ -75,7 +71,7 @@ mod tests {
     #[test]
     fn dry_run_never_pairs_with_the_damp_run_type() {
         let argv = topgrade_argv(
-            &profile(&["flatpak"]),
+            &explicit(&["flatpak"]),
             Path::new("/cfg/topgrade.toml"),
             true,
         );
@@ -87,7 +83,7 @@ mod tests {
     #[test]
     fn real_runs_print_each_command_as_it_executes() {
         let argv = topgrade_argv(
-            &profile(&["flatpak"]),
+            &explicit(&["flatpak"]),
             Path::new("/cfg/topgrade.toml"),
             false,
         );
@@ -109,7 +105,7 @@ mod tests {
     #[test]
     fn policy_flags_live_in_the_generated_config_not_argv() {
         let argv = topgrade_argv(
-            &profile(&["flatpak"]),
+            &explicit(&["flatpak"]),
             Path::new("/cfg/topgrade.toml"),
             false,
         );
@@ -125,7 +121,7 @@ mod tests {
     #[test]
     fn adds_dry_run_when_requested() {
         let argv = topgrade_argv(
-            &profile(&["flatpak"]),
+            &explicit(&["flatpak"]),
             Path::new("/cfg/topgrade.toml"),
             true,
         );
@@ -134,7 +130,7 @@ mod tests {
 
     #[test]
     fn skips_only_flag_without_steps() {
-        let argv = topgrade_argv(&profile(&[]), Path::new("/cfg/topgrade.toml"), false);
+        let argv = topgrade_argv(&explicit(&[]), Path::new("/cfg/topgrade.toml"), false);
         assert!(!strings(&argv).contains(&"--only".to_string()));
     }
 }

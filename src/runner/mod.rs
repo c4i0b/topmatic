@@ -60,7 +60,15 @@ pub fn run_scheduled(
     fs::create_dir_all(&paths.config_dir)?;
     fs::create_dir_all(paths.state_dir.join("status"))?;
     fs::create_dir_all(paths.logs_dir(&profile.name))?;
-    topgrade_config::write_if_changed(&paths.topgrade_config_file())?;
+    let resolved = crate::domain::overlay::resolved_steps(
+        profile,
+        &crate::domain::presets::fallback_catalog(),
+    );
+    let ignore: Vec<String> = match &resolved {
+        crate::domain::overlay::ResolvedSteps::Everything { excluded } => excluded.clone(),
+        _ => Vec::new(),
+    };
+    topgrade_config::write_if_changed(&paths.topgrade_config_file(), &ignore)?;
 
     let started = Utc::now();
     let log_path = paths.logs_dir(&profile.name).join(format!(
@@ -162,7 +170,11 @@ fn execute(
     started: DateTime<Utc>,
     log_path: &Path,
 ) -> RunOutcome {
-    let argv = topgrade_argv(profile, &paths.topgrade_config_file(), dry_run);
+    let resolved = crate::domain::overlay::resolved_steps(
+        profile,
+        &crate::domain::presets::fallback_catalog(),
+    );
+    let argv = topgrade_argv(&resolved, &paths.topgrade_config_file(), dry_run);
     let mut command = Command::new(topgrade_bin);
     command.args(&argv[1..]);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());

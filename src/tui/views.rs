@@ -289,15 +289,18 @@ fn draw_editor(state: &editor::EditorState, frame: &mut Frame, area: Rect) {
 
     if let Some(popup) = state.row_editor() {
         let lines = popup.lines();
-        let popup_area = centered_rect(area, 50, (lines.len() + 2) as u16);
-        let text = Paragraph::new(lines).block(Block::bordered().title(popup.title.clone()));
-        frame.render_widget(Clear, popup_area);
-        frame.render_widget(text, popup_area);
+        render_popup(
+            frame,
+            area,
+            50,
+            (lines.len() + 2) as u16,
+            lines,
+            popup.title.clone(),
+        );
     }
 
     if let Some(popup) = &state.name_popup {
-        let popup_area = centered_rect(area, 60, 5);
-        let text = Paragraph::new(vec![
+        let lines = vec![
             Line::from(""),
             Line::from(vec![
                 Span::raw(" name: "),
@@ -308,11 +311,23 @@ fn draw_editor(state: &editor::EditorState, frame: &mut Frame, area: Rect) {
                 name_popup_hint(&popup.value),
                 Style::new().fg(Color::DarkGray),
             )),
-        ])
-        .block(Block::bordered().title("save profile"));
-        frame.render_widget(Clear, popup_area);
-        frame.render_widget(text, popup_area);
+        ];
+        render_popup(frame, area, 60, 5, lines, "save profile");
     }
+}
+
+fn render_popup<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    width_percent: u16,
+    height: u16,
+    lines: impl Into<ratatui::text::Text<'a>>,
+    title: impl Into<String>,
+) {
+    let popup_area = centered_rect(area, width_percent, height);
+    let text = Paragraph::new(lines).block(Block::bordered().title(title.into()));
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(text, popup_area);
 }
 
 pub(crate) struct KeyGroup<'a> {

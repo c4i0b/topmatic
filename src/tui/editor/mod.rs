@@ -29,6 +29,12 @@ enum ScheduleRow {
     Weekday,
 }
 
+struct Baseline {
+    steps: BTreeSet<String>,
+    schedule: Schedule,
+    notify: NotifyPolicy,
+}
+
 pub struct EditorState {
     pub creating: bool,
     pub base: Option<String>,
@@ -46,7 +52,7 @@ pub struct EditorState {
     pub schedule: Schedule,
     pub notify: NotifyPolicy,
     pub section: Section,
-    baseline: (BTreeSet<String>, Schedule, NotifyPolicy),
+    baseline: Baseline,
     pub list_index: usize,
     pub schedule_index: usize,
     pub jitter_secs: u64,
@@ -111,7 +117,11 @@ impl EditorState {
                     schedule: schedule.clone(),
                     notify: profile.notify,
                     section: Section::Steps,
-                    baseline: (resolved, schedule, profile.notify),
+                    baseline: Baseline {
+                        steps: resolved,
+                        schedule,
+                        notify: profile.notify,
+                    },
                     list_index: 0,
                     schedule_index: 0,
                     jitter_secs,
@@ -134,11 +144,11 @@ impl EditorState {
                 schedule: base_schedule.clone(),
                 notify: NotifyPolicy::OnFailure,
                 section: Section::Steps,
-                baseline: (
-                    BTreeSet::new(),
-                    base_schedule.clone(),
-                    NotifyPolicy::OnFailure,
-                ),
+                baseline: Baseline {
+                    steps: BTreeSet::new(),
+                    schedule: base_schedule.clone(),
+                    notify: NotifyPolicy::OnFailure,
+                },
                 list_index: 0,
                 schedule_index: 0,
                 jitter_secs,
@@ -212,8 +222,9 @@ impl EditorState {
         if self.creating {
             return !self.selected_steps.is_empty();
         }
-        let (steps, schedule, notify) = &self.baseline;
-        *schedule != self.schedule || *notify != self.notify || *steps != self.selected_steps
+        self.baseline.schedule != self.schedule
+            || self.baseline.notify != self.notify
+            || self.baseline.steps != self.selected_steps
     }
 
     pub fn to_profile(&self, name: &str) -> Result<Profile, String> {

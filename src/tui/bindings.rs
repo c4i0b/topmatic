@@ -1,3 +1,26 @@
+use ratatui::style::{Color, Style};
+use ratatui::text::Span;
+
+pub const KEY_STYLE: Style = Style::new()
+    .fg(Color::Yellow)
+    .add_modifier(ratatui::style::Modifier::BOLD);
+pub const VERB_STYLE: Style = Style::new().fg(Color::DarkGray);
+
+pub fn legend_spans(table: &[Binding]) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for binding in table.iter().filter(|b| b.footer) {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(binding.key, KEY_STYLE));
+        if !binding.verb.is_empty() {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(binding.verb, VERB_STYLE));
+        }
+    }
+    spans
+}
+
 pub struct Binding {
     pub key: &'static str,
     pub verb: &'static str,
@@ -286,6 +309,7 @@ pub const FILTER_TYPING: &[Binding] = &[
     },
 ];
 
+#[cfg(test)]
 pub fn footer_tokens(table: &[Binding]) -> String {
     table
         .iter()
@@ -354,6 +378,24 @@ mod tests {
                 "legend overflows the common terminal width: {legend}"
             );
         }
+    }
+
+    #[test]
+    fn legend_spans_highlight_keys_and_dim_verbs() {
+        let spans = legend_spans(PRESET_PICKER);
+        assert_eq!(
+            spans.len(),
+            11,
+            "3 tokens as key/space/verb with two-space gaps"
+        );
+        assert_eq!(spans[0].content, "enter");
+        assert_eq!(spans[0].style, KEY_STYLE);
+        assert_eq!(spans[2].content, "choose");
+        assert_eq!(spans[2].style, VERB_STYLE);
+        assert_eq!(spans[3].content, "  ");
+        assert_eq!(spans[7].content, "  ");
+        let text: String = spans.iter().map(|s| s.content.clone()).collect();
+        assert_eq!(text, "enter choose  esc back  q quit");
     }
 
     #[test]

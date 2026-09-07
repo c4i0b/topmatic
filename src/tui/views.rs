@@ -108,7 +108,13 @@ fn draw_header(app: &App, frame: &mut Frame, area: Rect) {
 fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
     let filter_typing =
         app.filter.active || matches!(&app.view, View::Editor(state) if state.steps_filter.active);
-    let hints = footer_hints(&app.view, filter_typing);
+    let mut hint_spans = vec![Span::raw(" ")];
+    if filter_typing {
+        hint_spans.push(Span::raw("filter: "));
+        hint_spans.extend(bindings::legend_spans(bindings::FILTER_TYPING));
+    } else {
+        hint_spans.extend(bindings::legend_spans(footer_table(&app.view)));
+    }
     let prefix = if let Some(active_filter) = active_filter(app) {
         Some((format!(" /{}", active_filter), Color::Yellow))
     } else if let Some(job) = &app.in_flight {
@@ -130,21 +136,19 @@ fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
                 Paragraph::new(Line::from(vec![Span::styled(text, Style::new().fg(color))])),
                 status_area,
             );
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![Span::styled(
-                    format!(" {hints}"),
-                    Style::new().fg(Color::DarkGray),
-                )])),
-                hints_area,
-            );
+            frame.render_widget(Paragraph::new(Line::from(hint_spans.clone())), hints_area);
         }
-        None => frame.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(
-                format!(" {hints}"),
-                Style::new().fg(Color::DarkGray),
-            )])),
-            area,
-        ),
+        None => frame.render_widget(Paragraph::new(Line::from(hint_spans)), area),
+    }
+}
+
+fn footer_table(view: &View) -> &'static [bindings::Binding] {
+    match view {
+        View::Dashboard => bindings::DASHBOARD,
+        View::Editor(_) => bindings::EDITOR,
+        View::PresetPicker { .. } => bindings::PRESET_PICKER,
+        View::Logs(state) if state.follow => bindings::LOGS_FOLLOW,
+        View::Logs(_) => bindings::LOGS_BROWSE,
     }
 }
 
@@ -251,6 +255,7 @@ pub(crate) fn name_popup_hint(value: &str) -> String {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn footer_hints(view: &View, filter_active: bool) -> String {
     if filter_active {
         return format!(
@@ -356,7 +361,11 @@ fn group_lines(group: &KeyGroup) -> Vec<Line<'static>> {
         .into(),
     ];
     for (key, label) in group.keys {
-        lines.push(Span::raw(format!("  {key:width$}  {label}")).into());
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("{key:width$}"), bindings::KEY_STYLE),
+            Span::raw(format!("  {label}")),
+        ]));
     }
     lines.push(Line::from(""));
     lines

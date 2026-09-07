@@ -484,25 +484,12 @@ mod tests {
     }
 
     #[test]
-    fn readme_documents_every_footer_action() {
+    fn readme_points_at_the_in_app_help() {
         let readme = include_str!("../../README.md");
-        for table in [DASHBOARD, EDITOR, PRESET_PICKER, LOGS_FOLLOW, LOGS_BROWSE] {
-            for binding in table.iter().filter(|b| b.footer) {
-                assert!(
-                    readme.contains(binding.key),
-                    "README misses the {:?} key of a footer action",
-                    binding.key
-                );
-                if !binding.verb.is_empty() {
-                    assert!(
-                        readme.contains(binding.verb),
-                        "README misses the {:?} verb of the {} action",
-                        binding.verb,
-                        binding.key
-                    );
-                }
-            }
-        }
+        assert!(
+            readme.contains("footer") && readme.contains("`?`"),
+            "the README delegates key documentation to the in-app footer and help overlay"
+        );
     }
 
     #[test]

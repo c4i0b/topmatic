@@ -41,5 +41,6 @@ fixture:
 verify profile:
     ~/.cargo/bin/topmatic run {{profile}} --dry-run
 
+# Host smoke: drive the real TUI in a pty (see scripts/pty_drive.py)
 smoke:
     python3 scripts/pty_drive.py

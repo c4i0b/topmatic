@@ -153,13 +153,6 @@ impl Schedule {
 pub fn quick_choices(jitter_secs: u64) -> Vec<(&'static str, Schedule)> {
     vec![
         (
-            "daily",
-            Schedule {
-                preset: SchedulePreset::Daily { hour: 0, minute: 0 },
-                randomized_delay_sec: jitter_secs,
-            },
-        ),
-        (
             "every 6 hours",
             Schedule {
                 preset: SchedulePreset::EveryNHours { hours: 6 },
@@ -170,6 +163,13 @@ pub fn quick_choices(jitter_secs: u64) -> Vec<(&'static str, Schedule)> {
             "every 12 hours",
             Schedule {
                 preset: SchedulePreset::EveryNHours { hours: 12 },
+                randomized_delay_sec: jitter_secs,
+            },
+        ),
+        (
+            "daily",
+            Schedule {
+                preset: SchedulePreset::Daily { hour: 0, minute: 0 },
                 randomized_delay_sec: jitter_secs,
             },
         ),
@@ -201,6 +201,13 @@ pub fn quick_choices(jitter_secs: u64) -> Vec<(&'static str, Schedule)> {
     ]
 }
 
+pub fn daily_choice(jitter_secs: u64) -> Schedule {
+    Schedule {
+        preset: SchedulePreset::Daily { hour: 0, minute: 0 },
+        randomized_delay_sec: jitter_secs,
+    }
+}
+
 pub fn matches_quick_choice(schedule: &Schedule) -> Option<usize> {
     quick_choices(DEFAULT_RANDOM_DELAY_SEC)
         .iter()
@@ -210,6 +217,25 @@ pub fn matches_quick_choice(schedule: &Schedule) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quick_choices_escalate_in_interval_order() {
+        let labels: Vec<&str> = quick_choices(DEFAULT_RANDOM_DELAY_SEC)
+            .iter()
+            .map(|(label, _)| *label)
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                "every 6 hours",
+                "every 12 hours",
+                "daily",
+                "weekly",
+                "every 2 weeks",
+                "monthly"
+            ]
+        );
+    }
 
     #[test]
     fn biweekly_and_monthly_generate_verified_calendar_specs() {
@@ -355,7 +381,7 @@ mod tests {
         for (index, (_, choice)) in quick_choices(DEFAULT_RANDOM_DELAY_SEC).iter().enumerate() {
             assert_eq!(matches_quick_choice(choice), Some(index));
         }
-        assert_eq!(matches_quick_choice(&Schedule::default()), Some(0));
+        assert_eq!(matches_quick_choice(&Schedule::default()), Some(2));
     }
 
     #[test]

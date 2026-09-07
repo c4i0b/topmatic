@@ -62,7 +62,7 @@ pub enum EditorEvent {
 
 impl EditorState {
     pub fn new(original: Option<&Profile>, catalog: Vec<String>, jitter_secs: u64) -> Self {
-        let base_schedule = quick_choices(jitter_secs)[0].1.clone();
+        let base_schedule = crate::domain::schedule::daily_choice(jitter_secs);
         match original {
             Some(profile) => {
                 let mut schedule = profile.schedule.clone();
@@ -630,15 +630,15 @@ mod tests {
             editor.handle_key(key(KeyCode::Enter));
         };
 
-        choose(&mut editor, 3, 0);
+        choose(&mut editor, 1, 0);
         assert_eq!(editor.suggested_name.as_deref(), Some("all-weekly"));
         choose(&mut editor, 1, 0);
         assert_eq!(editor.suggested_name.as_deref(), Some("all-biweekly"));
         choose(&mut editor, 1, 0);
         assert_eq!(editor.suggested_name.as_deref(), Some("all-monthly"));
-        choose(&mut editor, 0, 5);
+        choose(&mut editor, 0, 3);
         assert_eq!(editor.suggested_name.as_deref(), Some("all-daily"));
-        choose(&mut editor, 2, 0);
+        choose(&mut editor, 0, 1);
         assert_eq!(editor.suggested_name.as_deref(), Some("all-12h"));
 
         let mut editing = editing_editor();
@@ -705,8 +705,6 @@ mod tests {
         editor.section = Section::Schedule;
         editor.handle_key(key(KeyCode::Enter));
         editor.handle_key(key(KeyCode::Down));
-        editor.handle_key(key(KeyCode::Down));
-        editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Enter));
         editor.handle_key(ctrl_s());
         editor.handle_key(key(KeyCode::Enter));
@@ -753,7 +751,7 @@ mod tests {
     #[test]
     fn new_editor_defaults_to_daily_midnight() {
         let editor = new_editor();
-        assert_eq!(matches_quick_choice(&editor.schedule), Some(0));
+        assert_eq!(matches_quick_choice(&editor.schedule), Some(2));
     }
 
     #[test]
@@ -767,8 +765,6 @@ mod tests {
             editor.row_editor.is_some(),
             "Enter on preset row opens popup"
         );
-        editor.handle_key(key(KeyCode::Down));
-        editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Enter));
         assert!(matches!(
@@ -811,13 +807,13 @@ mod tests {
         editor.handle_key(key(KeyCode::Enter));
         let popup = editor.row_editor().unwrap();
         assert_eq!(popup.title, "frequency");
-        assert_eq!(popup.index, 0);
+        assert_eq!(popup.index, 2, "daily preselects at its new position");
         assert_eq!(
             popup.options,
             vec![
-                "daily".to_string(),
                 "every 6 hours".to_string(),
                 "every 12 hours".to_string(),
+                "daily".to_string(),
                 "weekly".to_string(),
                 "every 2 weeks".to_string(),
                 "monthly".to_string()
@@ -866,7 +862,7 @@ mod tests {
         editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Esc));
         assert!(editor.row_editor.is_none());
-        assert_eq!(matches_quick_choice(&editor.schedule), Some(0));
+        assert_eq!(matches_quick_choice(&editor.schedule), Some(2));
     }
 
     #[test]

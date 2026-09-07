@@ -209,7 +209,7 @@ pub const EDITOR: &[Binding] = &[
     },
     Binding {
         key: "tab",
-        verb: "section",
+        verb: "switch section",
         help_key: "tab / shift-tab",
         desc: "switch section",
         group: MOVE_AND_EDIT,
@@ -452,11 +452,11 @@ mod tests {
         );
         assert_eq!(
             footer_tokens(EDITOR, true),
-            "↑↓←→ move  space/enter toggle  ctrl+a all  ctrl+d none  / filter  tab section  ctrl+s save  esc back  q quit"
+            "↑↓←→ move  space/enter toggle  ctrl+a all  ctrl+d none  / filter  tab switch section  ctrl+s save  esc back  q quit"
         );
         assert_eq!(
             footer_tokens(EDITOR, false),
-            "↑↓ move  enter choose  tab section  ctrl+s save  esc back  q quit"
+            "↑↓ move  enter choose  tab switch section  ctrl+s save  esc back  q quit"
         );
         assert_eq!(
             footer_tokens(PRESET_PICKER, false),

@@ -7,7 +7,7 @@ pub struct Preset {
 pub const PRESETS: &[Preset] = &[
     Preset {
         label: "All",
-        description: "everything installed; missing steps just skip (recommended)",
+        description: "updates everything you have installed (recommended)",
         suggested_name: "all-daily",
     },
     Preset {

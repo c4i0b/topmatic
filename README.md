@@ -1,5 +1,7 @@
 # Topmatic
 
+[![crates.io](https://img.shields.io/crates/v/topmatic.svg)](https://crates.io/crates/topmatic)
+
 Your user-level tools updated automatically without sudo.
 
 ![dashboard](docs/assets/dashboard.png)
@@ -28,7 +30,7 @@ Topmatic turns Topgrade into scheduled jobs you manage from a TUI.
   systemd is the only scheduler supported today
 - [Topgrade](https://github.com/topgrade-rs/topgrade) in `PATH`
 - Rust 1.85 or newer.
-  Topmatic installs from source for now
+  Topmatic installs from source
 
 ## Install
 
@@ -52,7 +54,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 Then:
 
 ```sh
-cargo install --git https://github.com/c4i0b/topmatic
+cargo install topmatic
 ```
 
 Run `topmatic` once.

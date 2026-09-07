@@ -64,10 +64,22 @@ It installs the user units and converges the timers.
 Topmatic refuses to run as root.
 It manages your user's systemd session, so sudo would act on root's units instead.
 Run it as your regular user.
-
-To let timers fire while logged out enable lingering yourself:
-`loginctl enable-linger`.
 Topmatic never runs anything privileged.
+
+### When you log out
+
+Systemd timers fire only while your session is open.
+With linger on they keep firing after you log out, so updates happen on time even when you are away.
+With linger off they wait for your next login, and missed runs catch up then.
+
+Linger is off by default:
+
+```sh
+loginctl enable-linger    # let updates run without a session
+loginctl disable-linger   # restore login-only updates
+```
+
+Topmatic shows the current state on the dashboard header and in `topmatic doctor`.
 
 ## Use
 

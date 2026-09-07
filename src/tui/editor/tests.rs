@@ -386,6 +386,34 @@ fn esc_on_dirty_editor_discard_leaves_with_cancel_event() {
 }
 
 #[test]
+fn untouched_overlay_edit_leaves_silently_on_esc() {
+    let mut profile = editing_editor().original.clone().unwrap();
+    profile.base = Some("all".to_string());
+    profile.steps = Vec::new();
+    let editor = EditorState::new(Some(&profile), catalog_entries(), DEFAULT_RANDOM_DELAY_SEC);
+    assert!(
+        !editor.is_dirty(),
+        "an untouched overlay edit starts clean: the baseline is the resolved state, not the empty stored steps"
+    );
+    let mut editor = editor;
+    assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::Cancel);
+
+    let mut dev = profile.clone();
+    dev.base = Some("dev-tools".to_string());
+    dev.extra_steps = vec!["flatpak".to_string()];
+    let mut editor = EditorState::new(Some(&dev), catalog_entries(), DEFAULT_RANDOM_DELAY_SEC);
+    assert!(
+        !editor.is_dirty(),
+        "enumerated overlays resolve into the baseline too"
+    );
+    editor.handle_key(key(KeyCode::Char(' ')));
+    assert!(
+        editor.is_dirty(),
+        "toggling any box diverges and asks on esc"
+    );
+}
+
+#[test]
 fn overlay_edit_saves_the_delta_without_the_name_popup() {
     let mut profile = editing_editor().original.clone().unwrap();
     profile.base = Some("dev-tools".to_string());

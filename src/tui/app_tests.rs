@@ -767,6 +767,48 @@ fn skipped_outcomes_render_as_skipped_not_failed() {
 }
 
 #[test]
+fn live_view_auto_returns_after_the_run_finishes() {
+    let (mut app, harness) = harness(&[profile("all-daily")]);
+    app.handle_key(key(KeyCode::Char('r')));
+    settle(&mut app);
+    assert!(matches!(&app.view, View::Logs(state) if state.follow));
+
+    harness.services.lock().unwrap().remove("all-daily");
+    write_status(&app.paths, "all-daily", true, 0);
+    app.on_tick();
+    assert!(
+        matches!(&app.view, View::Logs(state) if state.auto_close.is_some()),
+        "a fresh finish arms the linger instead of closing instantly"
+    );
+
+    for _ in 0..FOLLOW_LINGER_TICKS + 2 {
+        app.on_tick();
+    }
+    assert!(
+        matches!(app.view, View::Dashboard),
+        "the live view returns to the dashboard once the linger expires"
+    );
+}
+
+#[test]
+fn pressing_a_key_while_lingering_cancels_the_auto_return() {
+    let (mut app, harness) = harness(&[profile("all-daily")]);
+    app.handle_key(key(KeyCode::Char('r')));
+    settle(&mut app);
+    harness.services.lock().unwrap().remove("all-daily");
+    write_status(&app.paths, "all-daily", false, 1);
+    app.on_tick();
+    app.handle_key(key(KeyCode::Up));
+    for _ in 0..FOLLOW_LINGER_TICKS + 2 {
+        app.on_tick();
+    }
+    assert!(
+        matches!(&app.view, View::Logs(state) if state.follow),
+        "a key press cancels the auto close so the user can keep reading"
+    );
+}
+
+#[test]
 fn stale_status_from_before_the_run_does_not_pose_as_its_result() {
     let (mut app, harness) = harness(&[profile("all-daily")]);
     write_status(&app.paths, "all-daily", false, 9);

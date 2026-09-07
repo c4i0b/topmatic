@@ -24,6 +24,7 @@ use super::views;
 use crate::domain::profile::{NotifyPolicy, Profile};
 
 const MESSAGE_TTL_TICKS: u64 = 25;
+const FOLLOW_LINGER_TICKS: u32 = 8;
 const MIN_LOADING_TIME: Duration = Duration::from_millis(120);
 
 pub struct ResolvedBins {
@@ -425,6 +426,20 @@ impl App {
                 }
             };
             state.set_content(logs::tail(&self.paths, &profile, 200));
+            let finished_fresh = !running && !stale && status.is_some();
+            if running {
+                state.auto_close = None;
+            } else if finished_fresh && state.auto_close.is_none() && !state.linger_canceled {
+                state.auto_close = Some(FOLLOW_LINGER_TICKS);
+            }
+            if let Some(remaining) = state.auto_close
+                && let Some(left) = remaining.checked_sub(1)
+            {
+                state.auto_close = Some(left);
+            } else if state.auto_close.is_some() {
+                state.auto_close = None;
+                self.view = View::Dashboard;
+            }
         }
     }
 

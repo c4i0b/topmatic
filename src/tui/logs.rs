@@ -20,6 +20,8 @@ pub struct LogsState {
     pub follow_offset: u16,
     pub follow: bool,
     pub follow_header: String,
+    pub auto_close: Option<u32>,
+    pub linger_canceled: bool,
 }
 
 impl LogsState {
@@ -50,6 +52,8 @@ impl LogsState {
             follow_offset: 0,
             follow: false,
             follow_header: String::new(),
+            auto_close: None,
+            linger_canceled: false,
         }
     }
 
@@ -86,6 +90,10 @@ impl LogsState {
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         if self.follow {
+            if self.auto_close.is_some() {
+                self.linger_canceled = true;
+            }
+            self.auto_close = None;
             let page = self.page();
             return match key.code {
                 KeyCode::Esc | KeyCode::Char('h' | 'H' | 'l' | 'L') => true,

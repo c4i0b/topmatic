@@ -255,14 +255,14 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> String {
     if filter_active {
         return "filter: type…  Enter accept  Esc clear  ↑↓ move".to_string();
     }
-    let (table, dirty) = match view {
-        View::Dashboard => (bindings::DASHBOARD, false),
-        View::Editor(state) => (bindings::EDITOR, state.is_dirty()),
-        View::PresetPicker { .. } => (bindings::PRESET_PICKER, false),
-        View::Logs(state) if state.follow => (bindings::LOGS_FOLLOW, false),
-        View::Logs(_) => (bindings::LOGS_BROWSE, false),
+    let table = match view {
+        View::Dashboard => bindings::DASHBOARD,
+        View::Editor(_) => bindings::EDITOR,
+        View::PresetPicker { .. } => bindings::PRESET_PICKER,
+        View::Logs(state) if state.follow => bindings::LOGS_FOLLOW,
+        View::Logs(_) => bindings::LOGS_BROWSE,
     };
-    bindings::footer_tokens(table, dirty)
+    bindings::footer_tokens(table)
 }
 
 fn draw_editor(state: &editor::EditorState, frame: &mut Frame, area: Rect) {
@@ -504,15 +504,11 @@ mod tests {
     }
 
     #[test]
-    fn editor_footer_hint_leads_with_save_when_dirty() {
-        let state = EditorState::new(
+    fn editor_footer_hint_is_identical_clean_or_dirty() {
+        let clean = EditorState::new(
             None,
             Vec::new(),
             crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
-        );
-        assert!(
-            footer_hints(&View::Editor(Box::new(state)), false).starts_with("ctrl+s save"),
-            "the save command is visible even when clean"
         );
         let mut dirty = EditorState::new(
             None,
@@ -520,11 +516,14 @@ mod tests {
             crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
         );
         dirty.notify = crate::domain::profile::NotifyPolicy::Never;
-        let hint = footer_hints(&View::Editor(Box::new(dirty)), false);
-        assert!(
-            hint.starts_with("ctrl+s save"),
-            "a dirty editor leads with the save legend: {hint}"
+        let clean_hint = footer_hints(&View::Editor(Box::new(clean)), false);
+        let dirty_hint = footer_hints(&View::Editor(Box::new(dirty)), false);
+        assert_eq!(
+            clean_hint, dirty_hint,
+            "one legend regardless of dirty state: {clean_hint}"
         );
+        assert!(clean_hint.contains("ctrl+s save"));
+        assert!(clean_hint.contains("esc back"));
     }
 
     #[test]

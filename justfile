@@ -40,3 +40,6 @@ fixture:
 # Host-side dry-run verification of a profile
 verify profile:
     ~/.cargo/bin/topmatic run {{profile}} --dry-run
+
+smoke:
+    python3 scripts/pty_drive.py

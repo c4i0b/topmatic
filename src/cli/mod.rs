@@ -1,9 +1,13 @@
 mod doctor;
 mod edit;
+mod guard;
 mod list;
 mod reset;
 mod run;
 mod sync;
+
+#[cfg(test)]
+mod guard_tests;
 
 use crate::systemd::RealSystemdCtl;
 use clap::{Parser, Subcommand};
@@ -49,6 +53,7 @@ enum Command {
 
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    guard::block_root()?;
     match cli.command {
         Some(Command::Run { profile, dry_run }) => run::run(&profile, dry_run),
         Some(Command::Sync) => sync::run(),

@@ -19,6 +19,7 @@ Topmatic turns Topgrade into scheduled jobs you manage from a TUI.
 - Missed runs catch up on the next boot.
   Flaky runs self-heal behind a connectivity check
 - Jobs run at minimum priority so they never get in your way
+- Automatic cleanup after every run: Topmatic clears what Topgrade leaves behind
 - Every start repairs drift.
   `topmatic doctor` diagnoses and `topmatic reset` starts clean
 

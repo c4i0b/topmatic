@@ -113,12 +113,6 @@ impl SystemdCtl for FakeCtl {
         self.since.lock().unwrap().get(profile).copied()
     }
 
-    fn stop_service(&self, profile: &str) -> io::Result<()> {
-        self.record(format!("stop:{profile}"));
-        self.services.lock().unwrap().remove(profile);
-        Ok(())
-    }
-
     fn stop_all(&self) -> io::Result<()> {
         self.record("stop_all".to_string());
         Ok(())

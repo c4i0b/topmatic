@@ -181,16 +181,4 @@ impl App {
         });
         self.view = View::Logs(logs::LogsState::follow(&name));
     }
-
-    pub(super) fn stop_run(&mut self, profile: &str) {
-        self.log(ActivityKind::Action, format!("stopping {profile}"));
-        let ctl = (self.controller_factory)();
-        let name = profile.to_string();
-        self.spawn_background(format!("stopping {name}"), move || {
-            match ctl.stop_service(&name) {
-                Ok(()) => JobOutcome::Success(format!("stopped {name}")),
-                Err(error) => JobOutcome::Error(format!("stop failed: {error}")),
-            }
-        });
-    }
 }

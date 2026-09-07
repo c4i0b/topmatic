@@ -26,7 +26,6 @@ pub trait SystemdCtl: Send {
     fn linger_enabled(&self) -> Option<bool>;
     fn service_active(&self, profile: &str) -> bool;
     fn service_since(&self, profile: &str) -> Option<DateTime<Utc>>;
-    fn stop_service(&self, profile: &str) -> io::Result<()>;
 }
 
 pub struct RealSystemdCtl {
@@ -133,11 +132,6 @@ impl SystemdCtl for RealSystemdCtl {
             "--value",
         ]))?;
         parse_systemd_timestamp(String::from_utf8_lossy(&output.stdout).trim())
-    }
-
-    fn stop_service(&self, profile: &str) -> io::Result<()> {
-        let unit = units::timer_instance(profile).replace(".timer", ".service");
-        run_status(self.record(self.systemctl(&["stop", &unit])))
     }
 
     fn linger_enabled(&self) -> Option<bool> {

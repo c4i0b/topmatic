@@ -505,14 +505,14 @@ impl EditorState {
         match key.code {
             KeyCode::Up | KeyCode::Char('k' | 'K') => self.move_schedule_selection(-1),
             KeyCode::Down | KeyCode::Char('j' | 'J') => self.move_schedule_selection(1),
-            KeyCode::Enter | KeyCode::Char(' ') => self.open_row_editor(),
+            KeyCode::Enter => self.open_row_editor(),
             _ => {}
         }
         EditorEvent::None
     }
 
     fn handle_options_key(&mut self, key: KeyEvent) -> EditorEvent {
-        if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+        if matches!(key.code, KeyCode::Enter) {
             self.open_row_editor();
         }
         EditorEvent::None

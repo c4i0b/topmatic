@@ -642,55 +642,26 @@ fn live_view_escape_returns_and_run_keeps_going() {
 }
 
 #[test]
-fn live_view_x_works_while_the_start_is_still_in_flight() {
+fn live_view_follow_ignores_the_stop_key() {
     let (mut app, harness) = harness(&[profile("all-daily")]);
     app.handle_key(key(KeyCode::Char('r')));
-    assert!(
-        app.in_flight.is_some(),
-        "the start is still running in the background"
-    );
-    app.handle_key(key(KeyCode::Char('x')));
     settle(&mut app);
+    app.handle_key(key(KeyCode::Char('x')));
     assert!(
-        harness
+        matches!(app.view, View::Logs(_)),
+        "x keeps the live view open"
+    );
+    assert!(app.rows[0].running, "the run was not stopped");
+    assert!(
+        !harness
             .calls
             .lock()
             .unwrap()
             .contains(&"stop:all-daily".to_string()),
-        "x reaches systemd even before the start job settles: {:?}",
+        "x no longer reaches systemd: {:?}",
         harness.calls.lock().unwrap()
     );
-}
-
-#[test]
-fn live_view_x_stops_the_run_on_demand() {
-    let (mut app, harness) = harness(&[profile("all-daily")]);
-    app.handle_key(key(KeyCode::Char('r')));
-    settle(&mut app);
-    let before = harness.action_texts().len();
-    app.handle_key(key(KeyCode::Char('x')));
-    assert!(
-        app.in_flight.is_some(),
-        "stop is deferred behind busy feedback"
-    );
-    settle(&mut app);
-    assert!(
-        harness
-            .action_texts()
-            .iter()
-            .skip(before)
-            .any(|text| text.contains("stopped all-daily")),
-        "x records the stop: {:?}",
-        &harness.action_texts()[before..]
-    );
-    assert!(
-        harness
-            .calls
-            .lock()
-            .unwrap()
-            .contains(&"stop:all-daily".to_string())
-    );
-    assert!(!app.rows[0].running);
+    drop(harness);
 }
 
 #[test]

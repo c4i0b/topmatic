@@ -1,6 +1,6 @@
 [package]
 name = "topmatic"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 license = "MIT"
 description = "User-level scheduled updates powered by topgrade"

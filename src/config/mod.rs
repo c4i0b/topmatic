@@ -9,7 +9,7 @@ use crate::paths::Paths;
 use crate::runner::retry::RetryPolicy;
 
 const HEADER: &str =
-    "# topmatic configuration. Edit freely; topmatic reconciles systemd on next open.\n\n";
+    "# topmatic configuration.\n\n";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {

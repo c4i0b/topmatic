@@ -92,6 +92,16 @@ User-level update scheduler on top of topgrade, no sudo. topgrade always runs wi
 - TDD; **fixtures must be captured from real tool output, never invented** (a fabricated timestamp format once hid a bug)
 - Tests never touch real systemd/topgrade (stubs in tempdirs); host = integration (`just verify <profile>`). There is no devcontainer: `just check` needs a host Rust toolchain (the podman gate cannot run real systemd, so it fails and was removed)
 
+### Architecture rules (anti-spaghetti, learned the hard way)
+
+- One source of truth per concern: UI keybindings live in `tui/bindings.rs` and feed footer + help + a compile-time README cross-check; schedules/steps resolution lives in `domain/overlay.rs` and feeds argv, the runner, the dashboard and the editor. Never hand-write a second copy of what a registry already derives.
+- Domain layer stays pure (no IO): resolvers, deltas, argv and timestamp formatting are free functions with unit tests at the pyramid base; TUI modules only dispatch and render; persistence quirks (field omission, skip-if-empty) live at the serde/config edge, not sprinkled through business code.
+- External tool config keys must be verified against the REAL binary before shipping (topgrade's step-exclusion key is `disable`; an invented `ignore` was silently rejected and the run kept failing — the parse error listing the valid schema was the fixture).
+- Times: store UTC, render through `util::format_in` with the machine zone; tests use `FixedOffset`, never env mutation.
+- Host verification of TUI flows uses a python pty driver (fork + TIOCSWINSZ + key injection); diff frames make per-phase substring checks flaky, so assert on cumulative buffers or accept single-phase misses when unit tests already pin the behavior.
+- systemd `Type=oneshot` units stay `activating` for the whole run: `is-active` exits 3, plain `start` blocks until completion — detect via `show -p ActiveState`, start with `--no-block`, and treat `ExecMainStartTimestamp` as the run clock.
+- Keep production files small: test suites live in sibling `tests.rs`/`*_tests.rs` files (see `tui/app_tests.rs`), not thousand-line inline modules.
+
 ### Gotchas
 
 - Edition 2024: env mutation is unsafe in tests — use `Paths::with_bases`, never `set_var`

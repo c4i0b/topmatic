@@ -1,23 +1,30 @@
-# topmatic
+# Topmatic
 
 Your user-level tools updated automatically without sudo.
 
 ![dashboard](docs/assets/dashboard.png)
 
-Flatpaks, cargo installs, npm globals, pipx apps. [topgrade](https://github.com/topgrade-rs/topgrade) already knows how to update all of them. topmatic turns topgrade into scheduled jobs you manage from a TUI.
+Flatpaks, cargo installs, npm globals, pipx apps.
+[Topgrade](https://github.com/topgrade-rs/topgrade) already knows how to update all of them.
+
+Topmatic turns Topgrade into scheduled jobs you manage from a TUI.
 
 ## Why
 
 - Automatic updates of **your** software without root, daemons or cron hacks
-- Your own topgrade config stays untouched. topmatic always runs topgrade with an isolated config
-- Missed runs catch up on the next boot and flaky runs self-heal behind a connectivity check
+- Your own Topgrade config stays untouched.
+  Topmatic always runs Topgrade with an isolated config
+- Missed runs catch up on the next boot.
+  Flaky runs self-heal behind a connectivity check
 - Jobs run at minimum priority so they never get in your way
-- Every start repairs drift. `topmatic doctor` diagnoses and `topmatic reset` starts clean
+- Every start repairs drift.
+  `topmatic doctor` diagnoses and `topmatic reset` starts clean
 
 ## Requirements
 
-- Linux with **systemd** (user session). systemd is the only scheduler supported today
-- [topgrade](https://github.com/topgrade-rs/topgrade) in `PATH`
+- Linux with **systemd** (user session).
+  systemd is the only scheduler supported today
+- [Topgrade](https://github.com/topgrade-rs/topgrade) in `PATH`
 - Rust toolchain to install from source
 
 ## Install
@@ -26,7 +33,12 @@ Flatpaks, cargo installs, npm globals, pipx apps. [topgrade](https://github.com/
 cargo install --git https://github.com/c4i0b/topmatic
 ```
 
-Run `topmatic` once. It installs the user units and converges the timers. To let timers fire while logged out enable lingering yourself: `loginctl enable-linger`. topmatic never runs anything privileged.
+Run `topmatic` once.
+It installs the user units and converges the timers.
+
+To let timers fire while logged out enable lingering yourself:
+`loginctl enable-linger`.
+Topmatic never runs anything privileged.
 
 ## Use
 
@@ -38,13 +50,18 @@ topmatic sync     # converge systemd units to the config
 topmatic run <profile> [--dry-run]
 ```
 
-Every key is shown in the footer of each screen and `?` opens the full map.
+Every key is shown in the footer of each screen.
+`?` opens the full map.
 
 ### Presets
 
-- Picking a preset activates it immediately. No name to type, no editor to cross
-- `All` runs everything installed with no step list and picks up steps topgrade gains later
-- Editing a preset keeps only your changes in the config (`extra_steps`, `excluded_steps`, schedule). Reverted overrides disappear again
+- Picking a preset activates it immediately.
+  No name to type, no editor to cross
+- `All` runs everything installed with no step list.
+  It picks up steps Topgrade gains later
+- Editing a preset keeps only your changes in the config
+  (`extra_steps`, `excluded_steps`, schedule).
+  Reverted overrides disappear again
 
 ![editor](docs/assets/editor.png)
 
@@ -54,11 +71,18 @@ Every run leaves a log you can browse with `l`:
 
 ## Config
 
-- Profiles live in `~/.config/topmatic/config.toml`. Edit it by hand or via TUI
-- A `[defaults]` table tunes retries, retry delays, give-up time, network wait and jitter (`config.example.toml` documents every key)
-- The config is the single source of truth and safe to share between machines. Do **not** share `~/.local/state/topmatic` (machine-local history) or `~/.config/systemd/user` (regenerates)
+- Profiles live in `~/.config/topmatic/config.toml`.
+  Edit it by hand or via TUI
+- A `[defaults]` table tunes retries, retry delays, give-up time,
+  network wait and jitter.
+  `config.example.toml` documents every key
+- The config is the single source of truth and safe to share between machines.
+  Do **not** share `~/.local/state/topmatic` (machine-local history)
+  or `~/.config/systemd/user` (regenerates)
 
-topmatic only touches timers that carry its schedule drop-in. Timers from other tools, even ones named `topmatic@*`, are left alone and just reported.
+Topmatic only touches timers that carry its schedule drop-in.
+Timers from other tools, even ones named `topmatic@*`,
+are left alone and just reported.
 
 ## Development
 
@@ -66,7 +90,10 @@ topmatic only touches timers that carry its schedule drop-in. Timers from other 
 just check  # fmt + clippy + tests
 ```
 
-`just --list` shows every recipe. Tests use stubs so they run anywhere. Exceptions: `tests/systemd_integration.rs` needs a real user systemd and `just smoke` drives the real TUI in a pty.
+`just --list` shows every recipe.
+Tests use stubs so they run anywhere.
+Exceptions: `tests/systemd_integration.rs` needs a real user systemd
+and `just smoke` drives the real TUI in a pty.
 
 ## License
 

@@ -205,11 +205,35 @@ impl EditorState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> EditorEvent {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('s' | 'S'))
+        {
+            if self.name_popup.is_some() {
+                return self.handle_popup_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            }
+            self.open_name_popup();
+            return EditorEvent::None;
+        }
         if self.name_popup.is_some() {
             return self.handle_popup_key(key);
         }
         if self.row_editor.is_some() {
             return self.handle_row_editor_key(key);
+        }
+        if !self.steps_filter.active {
+            match key.code {
+                KeyCode::Char('1') => {
+                    self.open_name_popup();
+                    return EditorEvent::None;
+                }
+                KeyCode::Char('2') => {
+                    self.section = next_section(self.section);
+                    self.reset_indices();
+                    return EditorEvent::None;
+                }
+                KeyCode::Char('3') => return EditorEvent::Help,
+                _ => {}
+            }
         }
         if key.code == KeyCode::Char('?') && !self.steps_filter.is_engaged() {
             return EditorEvent::Help;
@@ -592,6 +616,77 @@ mod tests {
             Some("all-daily"),
             "editing keeps the profile name untouched"
         );
+    }
+
+    #[test]
+    fn digit_one_saves_from_any_section() {
+        let mut editor = editing_editor();
+        editor.section = Section::Steps;
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Char('1'))),
+            EditorEvent::None
+        );
+        assert!(
+            editor.name_popup.is_some(),
+            "1 opens the name popup from steps"
+        );
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Enter)),
+            EditorEvent::RequestSave
+        );
+    }
+
+    #[test]
+    fn digit_two_cycles_sections_like_tab() {
+        let mut editor = editing_editor();
+        editor.section = Section::Steps;
+        editor.handle_key(key(KeyCode::Char('2')));
+        assert_eq!(editor.section, Section::Schedule);
+    }
+
+    #[test]
+    fn digit_three_opens_help() {
+        let mut editor = editing_editor();
+        editor.section = Section::Steps;
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Char('3'))),
+            EditorEvent::Help
+        );
+    }
+
+    #[test]
+    fn digits_type_into_the_active_filter_instead() {
+        let mut editor = editing_editor();
+        editor.section = Section::Steps;
+        editor.handle_key(key(KeyCode::Char('/')));
+        editor.handle_key(key(KeyCode::Char('1')));
+        assert_eq!(
+            editor.steps_filter.text(),
+            "1",
+            "while typing, 1 belongs to the query"
+        );
+        assert!(editor.name_popup.is_none());
+    }
+
+    #[test]
+    fn ctrl_s_saves_from_anywhere_including_the_popup() {
+        let mut editor = editing_editor();
+        editor.section = Section::Schedule;
+        let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        editor.handle_key(ctrl_s);
+        assert!(
+            editor.name_popup.is_some(),
+            "ctrl+s opens the popup from any section"
+        );
+        assert_eq!(editor.handle_key(ctrl_s), EditorEvent::RequestSave);
+    }
+
+    #[test]
+    fn plain_s_still_does_nothing_special() {
+        let mut editor = editing_editor();
+        editor.section = Section::Steps;
+        editor.handle_key(key(KeyCode::Char('s')));
+        assert!(editor.name_popup.is_none());
     }
 
     #[test]

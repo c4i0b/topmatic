@@ -261,8 +261,10 @@ fn draw_editor(state: &editor::EditorState, frame: &mut Frame, area: Rect) {
         Some(name) => format!("edit profile — {name}"),
         None => "new profile".to_string(),
     };
+    let [body, bar] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
     let paragraph = Paragraph::new(state.body_lines()).block(Block::bordered().title(title));
-    frame.render_widget(paragraph, area);
+    frame.render_widget(paragraph, body);
+    frame.render_widget(Paragraph::new(state.action_bar()), bar);
 
     if let Some(popup) = state.row_editor() {
         let lines = popup.lines();
@@ -410,6 +412,7 @@ pub(crate) fn editor_help() -> Vec<Line<'static>> {
         KeyGroup {
             title: "Save & leave",
             keys: &[
+                ("1 / ctrl+s", "save from anywhere in the editor"),
                 (
                     "save row → enter",
                     "type a name; enter saves and returns home",

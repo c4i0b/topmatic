@@ -24,6 +24,14 @@ impl EditorState {
         ])
     }
 
+    pub(crate) fn action_bar(&self) -> Line<'static> {
+        let dirty = if self.is_dirty() { " *" } else { "" };
+        Line::from(vec![
+            Span::styled(format!("[1] save{dirty}  "), Style::new().fg(Color::Cyan)),
+            Span::raw("[2] tab sections  [3] help"),
+        ])
+    }
+
     pub(crate) fn body_lines(&self) -> Vec<Line<'static>> {
         let mut lines = vec![self.steps_header()];
         let (steps_start, steps_end) = self.steps_window();
@@ -338,6 +346,29 @@ mod tests {
         assert!(
             committed.contains("filter: flat") && !committed.contains('▏'),
             "a committed filter stays visible without the caret: {committed:?}"
+        );
+    }
+
+    #[test]
+    fn action_bar_lists_save_first_and_marks_dirty() {
+        let mut editor = editing_editor();
+        let clean = editor.action_bar();
+        let text = clean.iter().map(|s| s.content.as_ref()).collect::<String>();
+        assert!(
+            text.starts_with("[1] save  [2] tab sections  [3] help"),
+            "the bar reads save-first like k9s menus: {text:?}"
+        );
+        assert!(!text.contains('*'));
+
+        editor.notify = NotifyPolicy::Never;
+        let dirty = editor
+            .action_bar()
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>();
+        assert!(
+            dirty.contains("save *"),
+            "dirty state marks the save action: {dirty:?}"
         );
     }
 

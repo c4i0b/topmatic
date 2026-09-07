@@ -91,7 +91,12 @@ fn countdown(next: DateTime<Utc>) -> String {
     }
 }
 
-fn detail_lines<'a>(profile: &Profile, row: &ProfileRow, log_tail: Option<&str>) -> Vec<Line<'a>> {
+fn detail_lines<'a>(
+    profile: &Profile,
+    row: &ProfileRow,
+    log_tail: Option<&str>,
+    catalog: &[String],
+) -> Vec<Line<'a>> {
     let mut lines = vec![
         Line::from(vec![
             Span::styled(
@@ -152,7 +157,10 @@ fn detail_lines<'a>(profile: &Profile, row: &ProfileRow, log_tail: Option<&str>)
         }),
         Line::from(vec![
             Span::styled("steps      ", Style::new().fg(Color::Cyan)),
-            Span::styled(step_preview(&profile.steps), Style::new().fg(Color::Green)),
+            Span::styled(
+                resolved_step_preview(profile, catalog),
+                Style::new().fg(Color::Green),
+            ),
         ]),
         Line::from(vec![
             Span::styled("options    ", Style::new().fg(Color::Cyan)),
@@ -181,6 +189,34 @@ fn notify_label(policy: crate::domain::profile::NotifyPolicy) -> &'static str {
 }
 
 const STEPS_PREVIEW: usize = 6;
+
+fn resolved_step_preview(profile: &Profile, catalog: &[String]) -> String {
+    match crate::domain::overlay::resolved_steps(profile, catalog) {
+        crate::domain::overlay::ResolvedSteps::Everything { excluded } => {
+            if excluded.is_empty() {
+                "everything".to_string()
+            } else {
+                let shown: Vec<&str> = excluded[..excluded.len().min(STEPS_PREVIEW)]
+                    .iter()
+                    .map(String::as_str)
+                    .collect();
+                let extra = excluded.len().saturating_sub(STEPS_PREVIEW);
+                if extra > 0 {
+                    format!("everything except {} … and {extra} more", shown.join(" "))
+                } else {
+                    format!("everything except {}", shown.join(" "))
+                }
+            }
+        }
+        crate::domain::overlay::ResolvedSteps::Explicit(steps) => {
+            if steps.is_empty() {
+                "everything".to_string()
+            } else {
+                step_preview(&steps)
+            }
+        }
+    }
+}
 
 fn step_preview(steps: &[String]) -> String {
     if steps.len() <= STEPS_PREVIEW {
@@ -237,7 +273,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
     let detail = match app.selected_profile() {
         Some((profile, row)) => {
             let tail = crate::tui::logs::tail(&app.paths, &row.name, 12);
-            detail_lines(profile, row, tail.as_deref())
+            detail_lines(profile, row, tail.as_deref(), &app.catalog)
         }
         None => vec![Line::from("no profile selected")],
     };
@@ -253,6 +289,18 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
 mod tests {
     use super::*;
     use crate::domain::profile::Profile;
+
+    fn catalog_vec() -> Vec<String> {
+        vec![
+            "cargo".to_string(),
+            "flatpak".to_string(),
+            "rustup".to_string(),
+            "node".to_string(),
+            "vim".to_string(),
+            "am".to_string(),
+            "gh".to_string(),
+        ]
+    }
 
     fn profile_with_steps(steps: usize) -> Profile {
         Profile {
@@ -294,6 +342,44 @@ mod tests {
     }
 
     #[test]
+    fn overlay_steps_render_resolved_in_the_details_pane() {
+        let row = ProfileRow {
+            name: "all-daily".to_string(),
+            schedule: "daily 00:00".to_string(),
+            next_run: None,
+            status: None,
+            timer_active: true,
+            running: false,
+            running_since: None,
+        };
+        let mut everything = profile_with_steps(0);
+        everything.base = Some("all".to_string());
+        let text = detail_text(&detail_lines(&everything, &row, None, &catalog_vec())).join("\n");
+        assert!(
+            text.contains("everything"),
+            "the all overlay shows everything: {text}"
+        );
+
+        let mut excluded = everything.clone();
+        excluded.excluded_steps = vec!["cargo".to_string()];
+        let text = detail_text(&detail_lines(&excluded, &row, None, &catalog_vec())).join("\n");
+        assert!(
+            text.contains("everything except cargo"),
+            "exclusions render explicitly: {text}"
+        );
+
+        let mut dev = profile_with_steps(0);
+        dev.base = Some("dev-tools".to_string());
+        dev.extra_steps = vec!["flatpak".to_string()];
+        dev.excluded_steps = vec!["node".to_string()];
+        let text = detail_text(&detail_lines(&dev, &row, None, &catalog_vec())).join("\n");
+        assert!(
+            text.contains("cargo") && text.contains("flatpak") && !text.contains("node"),
+            "enumerated overlays render the merged list: {text}"
+        );
+    }
+
+    #[test]
     fn detail_lines_never_split_step_summary_mid_word() {
         let profile = profile_with_steps(162);
         let row = ProfileRow {
@@ -305,7 +391,7 @@ mod tests {
             running: false,
             running_since: None,
         };
-        let lines = detail_text(&detail_lines(&profile, &row, None));
+        let lines = detail_text(&detail_lines(&profile, &row, None, &catalog_vec()));
         let steps = lines
             .iter()
             .find(|line| line.starts_with("steps      "))
@@ -337,7 +423,7 @@ mod tests {
             running_since: None,
         };
         let pane_width = 80;
-        for line in detail_text(&detail_lines(&profile, &row, None)) {
+        for line in detail_text(&detail_lines(&profile, &row, None, &catalog_vec())) {
             assert!(
                 line.chars().count() <= pane_width,
                 "detail line overflows the pane: {line:?}"
@@ -381,7 +467,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                let paragraph = Paragraph::new(detail_lines(&profile, &row, None))
+                let paragraph = Paragraph::new(detail_lines(&profile, &row, None, &catalog_vec()))
                     .block(Block::bordered().title("Details"))
                     .wrap(Wrap { trim: true });
                 frame.render_widget(paragraph, area);

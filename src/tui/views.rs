@@ -10,6 +10,7 @@ use crate::activity::{ActivityEntry, ActivityKind};
 
 use super::View;
 use super::app::App;
+use super::bindings;
 use super::dashboard;
 use super::editor;
 use super::logs;
@@ -241,22 +242,18 @@ pub(crate) fn name_popup_hint(value: &str) -> &'static str {
     }
 }
 
-pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
+pub(crate) fn footer_hints(view: &View, filter_active: bool) -> String {
     if filter_active {
-        return "filter: type…  Enter accept  Esc clear  ↑↓ move";
+        return "filter: type…  Enter accept  Esc clear  ↑↓ move".to_string();
     }
-    match view {
-        View::Dashboard => {
-            "L activity  / filter  n new  e edit  d delete  r run now  l logs  ? help  q quit"
-        }
-        View::Editor(state) if state.is_dirty() => {
-            "ctrl+s save  esc save/leave  tab section  ↑↓←→ move  q quit"
-        }
-        View::Editor(_) => "↑↓←→ move  enter edit  tab section  esc back  q quit",
-        View::PresetPicker { .. } => "enter choose  esc back  q quit",
-        View::Logs(state) if state.follow => "x stop  ↑↓ scroll  esc back  q quit",
-        View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
-    }
+    let (table, dirty) = match view {
+        View::Dashboard => (bindings::DASHBOARD, false),
+        View::Editor(state) => (bindings::EDITOR, state.is_dirty()),
+        View::PresetPicker { .. } => (bindings::PRESET_PICKER, false),
+        View::Logs(state) if state.follow => (bindings::LOGS_FOLLOW, false),
+        View::Logs(_) => (bindings::LOGS_BROWSE, false),
+    };
+    bindings::footer_tokens(table, dirty)
 }
 
 fn draw_editor(state: &editor::EditorState, frame: &mut Frame, area: Rect) {
@@ -354,25 +351,14 @@ fn group_lines(group: &KeyGroup) -> Vec<Line<'static>> {
 }
 
 pub(crate) fn dashboard_help() -> Vec<Line<'static>> {
-    let groups = &[
-        KeyGroup {
-            title: "Profiles",
-            keys: &[
-                ("↑/↓ or j/k", "move selection"),
-                ("enter / e", "edit the selected profile"),
-                ("n", "new profile (from presets)"),
-                ("d", "delete profile — always asks first"),
-                ("r", "run now, opens the live view"),
-                ("l", "browse run logs"),
-                ("L", "toggle the activity panel"),
-                ("/", "filter profiles by name"),
-            ],
-        },
-        KeyGroup {
-            title: "Global",
-            keys: &[("? / esc", "close this help"), ("q", "quit topmatic")],
-        },
-    ];
+    let owned: Vec<KeyGroup> = bindings::help_groups(bindings::DASHBOARD)
+        .into_iter()
+        .map(|(title, rows)| KeyGroup {
+            title,
+            keys: rows.leak(),
+        })
+        .collect();
+    let groups = &owned[..];
     let mut lines: Vec<Line<'static>> = Vec::new();
     for group in groups {
         lines.extend(group_lines(group));
@@ -405,33 +391,22 @@ pub(crate) fn dashboard_help() -> Vec<Line<'static>> {
 }
 
 pub(crate) fn editor_help() -> Vec<Line<'static>> {
-    let groups = &[
-        KeyGroup {
-            title: "Move & edit",
-            keys: &[
-                ("tab / shift-tab", "switch section"),
-                ("↑↓←→ or hjkl", "move in the current section"),
-                ("enter / space", "act on the highlighted row"),
-                ("/", "filter the steps list"),
-            ],
-        },
-        KeyGroup {
-            title: "Save & leave",
-            keys: &[
-                ("ctrl+s", "save from anywhere in the editor"),
-                ("esc", "save or leave — asks when there are unsaved changes"),
-                ("q", "quit topmatic"),
-            ],
-        },
-        KeyGroup {
-            title: "Rows",
-            keys: &[
-                ("preset", "frequency (bi-weekly renders as two lines)"),
-                ("notify", "always / on failure / never"),
-                ("steps", "pick what runs; a * marks unsaved changes"),
-            ],
-        },
-    ];
+    let mut owned: Vec<KeyGroup> = bindings::help_groups(bindings::EDITOR)
+        .into_iter()
+        .map(|(title, rows)| KeyGroup {
+            title,
+            keys: rows.leak(),
+        })
+        .collect();
+    owned.push(KeyGroup {
+        title: "Rows",
+        keys: &[
+            ("preset", "frequency (bi-weekly renders as two lines)"),
+            ("notify", "always / on failure / never"),
+            ("steps", "pick what runs; a * marks unsaved changes"),
+        ],
+    });
+    let groups = &owned[..];
     let mut lines: Vec<Line<'static>> = Vec::new();
     for group in groups {
         lines.extend(group_lines(group));

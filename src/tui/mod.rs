@@ -1,4 +1,5 @@
 mod app;
+mod bindings;
 mod dashboard;
 mod editor;
 mod input;

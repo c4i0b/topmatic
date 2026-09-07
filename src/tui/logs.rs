@@ -273,7 +273,7 @@ pub fn render(state: &LogsState, frame: &mut Frame, area: Rect) {
             .block(
                 Block::bordered()
                     .title(format!(
-                        "{} — {} (esc back, j/k scroll)",
+                        "{} · {}",
                         state.profile,
                         state
                             .entries

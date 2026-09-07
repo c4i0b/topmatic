@@ -277,7 +277,7 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> String {
 fn draw_editor(state: &editor::EditorState, frame: &mut Frame, area: Rect) {
     let dirty = if state.is_dirty() { " *" } else { "" };
     let title = match &state.original_name {
-        Some(name) => format!("edit profile — {name}{dirty}"),
+        Some(name) => format!("edit profile · {name}{dirty}"),
         None => format!("new profile{dirty}"),
     };
     let paragraph = Paragraph::new(state.body_lines()).block(Block::bordered().title(title));

@@ -1,7 +1,6 @@
 pub fn render(ignore: &[String]) -> String {
     let mut lines: Vec<String> = vec![
-        "# Managed by topmatic. This file isolates topmatic from your own topgrade".to_string(),
-        "# configuration; manual edits will be overwritten.".to_string(),
+        "# Managed by topmatic. Manual edits will be overwritten.".to_string(),
         "assume_yes = true".to_string(),
         "cleanup = true".to_string(),
         "ask_retry = false".to_string(),

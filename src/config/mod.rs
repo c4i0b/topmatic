@@ -154,8 +154,8 @@ pub fn render_example() -> String {
     let defaults = ResolvedDefaults::hardcoded();
     let duration = |value: Duration| humantime::format_duration(value).to_string();
     [
-        "# topmatic defaults - copy uncommented lines into config.toml to override.".to_string(),
-        "# This file is regenerated automatically; manual edits are overwritten.".to_string(),
+        "# topmatic defaults. Regenerated automatically, copy lines into config.toml to override."
+            .to_string(),
         String::new(),
         "[defaults]".to_string(),
         format!("# retries = {}", defaults.retries),

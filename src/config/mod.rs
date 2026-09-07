@@ -284,7 +284,8 @@ pub fn validate_profile(profile: &Profile) -> Vec<String> {
             profile.name
         ));
     }
-    if profile.steps.is_empty() {
+    let carries_base = profile.base.is_some();
+    if profile.steps.is_empty() && !carries_base {
         errors.push("no steps selected".to_string());
     }
     for step in &profile.steps {

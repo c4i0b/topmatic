@@ -22,4 +22,4 @@ pub const PRESETS: &[Preset] = &[
     },
 ];
 
-pub use crate::domain::presets::{fallback_catalog, steps_for};
+pub use crate::domain::presets::fallback_catalog;

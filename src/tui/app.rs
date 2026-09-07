@@ -21,6 +21,7 @@ use super::logs;
 use super::overlay::{Overlay, OverlayAction};
 use super::presets;
 use super::views;
+use crate::domain::profile::{NotifyPolicy, Profile, Scope};
 
 const MESSAGE_TTL_TICKS: u64 = 25;
 const MIN_LOADING_TIME: Duration = Duration::from_millis(120);
@@ -518,20 +519,16 @@ impl App {
                     }
                     KeyCode::Esc => self.view = View::Dashboard,
                     KeyCode::Enter => {
-                        let jitter = self.config.defaults.resolved().random_delay.as_secs();
-                        let editor = if index < presets::PRESETS.len() {
-                            let preset = &presets::PRESETS[index];
-                            let steps = presets::steps_for(index, &self.catalog);
-                            editor::EditorState::from_preset(
-                                self.catalog.clone(),
-                                steps,
-                                preset.suggested_name,
-                                jitter,
-                            )
+                        if index < presets::PRESETS.len() {
+                            self.activate_preset(index);
                         } else {
-                            editor::EditorState::new(None, self.catalog.clone(), jitter)
-                        };
-                        self.view = View::Editor(Box::new(editor));
+                            let jitter = self.config.defaults.resolved().random_delay.as_secs();
+                            self.view = View::Editor(Box::new(editor::EditorState::new(
+                                None,
+                                self.catalog.clone(),
+                                jitter,
+                            )));
+                        }
                     }
                     _ => {}
                 }
@@ -745,6 +742,41 @@ impl App {
         self.spawn_sync_job(format!("saving {name}"), move |report| {
             if report.errors.is_empty() {
                 JobOutcome::Success(format!("saved {name}"))
+            } else {
+                JobOutcome::Error(format!("sync errors: {}", report.errors.join("; ")))
+            }
+        });
+    }
+
+    fn activate_preset(&mut self, index: usize) {
+        let preset = &presets::PRESETS[index];
+        let base = crate::domain::presets::PRESET_IDS[index];
+        let name = preset.suggested_name.to_string();
+        if self.config.profiles.iter().any(|p| p.name == name) {
+            self.set_error_message(format!("{name} is already active"));
+            return;
+        }
+        let profile = Profile {
+            name,
+            steps: Vec::new(),
+            base: Some(base.to_string()),
+            extra_steps: Vec::new(),
+            excluded_steps: Vec::new(),
+            schedule: crate::domain::schedule::daily_choice(
+                self.config.defaults.resolved().random_delay.as_secs(),
+            ),
+            notify: NotifyPolicy::default(),
+            scope: Scope::User,
+        };
+        self.log(ActivityKind::Action, format!("activated preset {base}"));
+        self.config.upsert(profile);
+        if let Err(error) = config::save(&self.paths, &self.config) {
+            self.set_error_message(format!("save failed: {error}"));
+            return;
+        }
+        self.spawn_sync_job(format!("activating {base}"), move |report| {
+            if report.errors.is_empty() {
+                JobOutcome::Success(format!("activated {base}"))
             } else {
                 JobOutcome::Error(format!("sync errors: {}", report.errors.join("; ")))
             }
@@ -1045,37 +1077,19 @@ mod tests {
     }
 
     #[test]
-    fn creating_over_an_existing_suggested_name_keeps_the_editor_and_reports() {
-        let (mut app, _harness) = harness(&[profile("all-daily"), profile("other")]);
+    fn activating_an_already_active_preset_reports_and_stays() {
+        let (mut app, _harness) = harness(&[profile("all-daily")]);
         app.catalog = presets::fallback_catalog();
         app.handle_key(key(KeyCode::Char('n')));
-        assert!(matches!(app.view, View::PresetPicker { .. }));
         app.handle_key(key(KeyCode::Enter));
         assert!(
-            matches!(app.view, View::Editor(_)),
-            "first preset 'all-daily' opens the create editor"
+            matches!(app.view, View::Dashboard),
+            "no editor opens for presets"
         );
-        save_editor_profile(&mut app, "all-daily", "all-daily");
-
         assert!(
-            app.message.contains("already exists"),
-            "colliding with an existing profile must report and stay in the editor: {:?}",
+            app.message.contains("already active"),
+            "the sticky error names the collision: {:?}",
             app.message
-        );
-        match &app.view {
-            View::Editor(state) => {
-                assert!(
-                    state.name_popup.is_some(),
-                    "a colliding save reopens the name popup so the user can fix the name in place"
-                );
-            }
-            _ => panic!("the user stays on the creation screen, not the dashboard"),
-        }
-        let saved = crate::config::load(&app.paths).unwrap();
-        assert_eq!(
-            saved.profiles.len(),
-            2,
-            "no profile is created on collision"
         );
     }
 
@@ -1083,8 +1097,13 @@ mod tests {
     fn save_keeps_the_dashboard_responsive_while_syncing() {
         let (mut app, harness) = harness(&[]);
         app.handle_key(key(KeyCode::Char('n')));
+        for _ in 0..3 {
+            app.handle_key(key(KeyCode::Down));
+        }
         app.handle_key(key(KeyCode::Enter));
-        save_editor_profile(&mut app, "all-daily", "all-daily");
+        assert!(matches!(app.view, View::Editor(_)));
+        app.handle_key(key(KeyCode::Char(' ')));
+        save_editor_profile(&mut app, "", "all-daily");
 
         assert!(
             app.in_flight.is_some(),
@@ -1117,35 +1136,44 @@ mod tests {
     }
 
     #[test]
-    fn new_profile_flow_picks_preset_saves_and_converges() {
+    fn preset_activation_creates_the_overlay_and_converges() {
         let (mut app, harness) = harness(&[]);
         app.handle_key(key(KeyCode::Char('n')));
         assert!(matches!(app.view, View::PresetPicker { .. }));
         app.handle_key(key(KeyCode::Enter));
-        assert!(matches!(app.view, View::Editor(_)));
-        save_editor_profile(&mut app, "all-daily", "all-daily");
+        assert!(
+            matches!(app.view, View::Dashboard),
+            "activation never opens the editor"
+        );
+        assert!(app.in_flight.is_some(), "activation spawns the sync job");
         settle(&mut app);
 
-        assert!(
-            harness
-                .action_texts()
-                .iter()
-                .any(|text| text.contains("saved all-daily")),
-            "the preset save is recorded in the activity log: {:?}",
-            harness.action_texts()
-        );
-        assert!(matches!(app.view, View::Dashboard));
         let saved = crate::config::load(&app.paths).unwrap();
-        assert_eq!(saved.profiles.len(), 1);
-        assert_eq!(saved.profiles[0].name, "all-daily");
-        assert!(!saved.profiles[0].steps.is_empty());
+        let activated = saved
+            .profiles
+            .iter()
+            .find(|p| p.name == "all-daily")
+            .unwrap();
+        assert_eq!(activated.base.as_deref(), Some("all"));
+        assert!(
+            activated.steps.is_empty(),
+            "everything base stores no steps"
+        );
         assert!(
             harness
                 .calls
                 .lock()
                 .unwrap()
                 .contains(&"enable:all-daily".to_string()),
-            "saving converges the new timer"
+            "activation converges systemd state"
+        );
+        assert!(
+            harness
+                .action_texts()
+                .iter()
+                .any(|text| text.contains("activated preset all")),
+            "activation is recorded: {:?}",
+            harness.action_texts()
         );
     }
 

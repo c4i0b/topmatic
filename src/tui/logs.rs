@@ -186,9 +186,6 @@ impl LogsState {
                     self.load_selected();
                 }
             }
-            KeyCode::Backspace => {
-                self.content = None;
-            }
             _ => {}
         }
         false
@@ -385,7 +382,7 @@ mod tests {
             state.handle_key(key(KeyCode::Enter)),
             "enter with content open leaves the screen (inherits esc)"
         );
-        state.handle_key(key(KeyCode::Backspace));
+        state.content = None;
         assert!(
             !state.handle_key(key(KeyCode::Enter)),
             "enter on the bare list opens the highlighted run again"

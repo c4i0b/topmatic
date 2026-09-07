@@ -55,7 +55,7 @@ pub const DASHBOARD: &[Binding] = &[
         key: "↑↓",
         verb: "move",
         help_key: "↑/↓ or j/k",
-        desc: "move selection",
+        desc: "move the profile selection",
         group: PROFILES,
         footer: true,
         scope: Scope::All,
@@ -64,7 +64,7 @@ pub const DASHBOARD: &[Binding] = &[
         key: "n",
         verb: "new",
         help_key: "n",
-        desc: "new profile (from presets)",
+        desc: "open the profile picker",
         group: PROFILES,
         footer: true,
         scope: Scope::All,
@@ -82,7 +82,7 @@ pub const DASHBOARD: &[Binding] = &[
         key: "d",
         verb: "delete",
         help_key: "d",
-        desc: "delete profile — always asks first",
+        desc: "delete the profile · always asks first",
         group: PROFILES,
         footer: true,
         scope: Scope::All,
@@ -148,15 +148,24 @@ pub const EDITOR: &[Binding] = &[
         key: "↑↓←→",
         verb: "move",
         help_key: "↑↓←→ or hjkl",
-        desc: "move in the current section",
+        desc: "move in the steps grid",
         group: MOVE_AND_EDIT,
         footer: true,
-        scope: Scope::All,
+        scope: Scope::StepsOnly,
     },
     Binding {
-        key: "enter",
+        key: "↑↓",
+        verb: "move",
+        help_key: "↑/↓ or j/k",
+        desc: "move in the schedule and options rows",
+        group: MOVE_AND_EDIT,
+        footer: true,
+        scope: Scope::RowsOnly,
+    },
+    Binding {
+        key: "space/enter",
         verb: "toggle",
-        help_key: "enter / space",
+        help_key: "space / enter",
         desc: "toggle steps · choose the highlighted row",
         group: MOVE_AND_EDIT,
         footer: true,
@@ -200,7 +209,7 @@ pub const EDITOR: &[Binding] = &[
     },
     Binding {
         key: "tab",
-        verb: "section",
+        verb: "switch section",
         help_key: "tab / shift-tab",
         desc: "switch section",
         group: MOVE_AND_EDIT,
@@ -220,7 +229,7 @@ pub const EDITOR: &[Binding] = &[
         key: "esc",
         verb: "back",
         help_key: "esc",
-        desc: "save or leave — asks when there are unsaved changes",
+        desc: "save or leave · asks when unsaved",
         group: SAVE_AND_LEAVE,
         footer: true,
         scope: Scope::All,
@@ -232,6 +241,15 @@ pub const EDITOR: &[Binding] = &[
         desc: "quit topmatic",
         group: SAVE_AND_LEAVE,
         footer: true,
+        scope: Scope::All,
+    },
+    Binding {
+        key: "?",
+        verb: "help",
+        help_key: "?",
+        desc: "show this help",
+        group: SAVE_AND_LEAVE,
+        footer: false,
         scope: Scope::All,
     },
 ];
@@ -247,9 +265,9 @@ pub const PRESET_PICKER: &[Binding] = &[
         scope: Scope::All,
     },
     Binding {
-        key: "esc",
+        key: "esc/l",
         verb: "back",
-        help_key: "esc / l",
+        help_key: "esc / l / h",
         desc: "back to the dashboard",
         group: GLOBAL,
         footer: true,
@@ -268,27 +286,18 @@ pub const PRESET_PICKER: &[Binding] = &[
 
 pub const LOGS_FOLLOW: &[Binding] = &[
     Binding {
-        key: "x",
-        verb: "stop",
-        help_key: "x",
-        desc: "stop the running profile",
-        group: PROFILES,
-        footer: true,
-        scope: Scope::All,
-    },
-    Binding {
         key: "↑↓",
         verb: "scroll",
-        help_key: "↑↓ / pgup/pgdn",
+        help_key: "↑↓ / pgup/pgdn / home/end",
         desc: "scroll the live log (auto-follows at the bottom)",
         group: MOVE_AND_EDIT,
         footer: true,
         scope: Scope::All,
     },
     Binding {
-        key: "esc",
+        key: "esc/l",
         verb: "back",
-        help_key: "esc",
+        help_key: "esc / l / h",
         desc: "back to the dashboard",
         group: GLOBAL,
         footer: true,
@@ -325,10 +334,10 @@ pub const LOGS_BROWSE: &[Binding] = &[
         scope: Scope::All,
     },
     Binding {
-        key: "esc",
+        key: "esc/l",
         verb: "back",
-        help_key: "esc / h / l",
-        desc: "leave the log view; enter closes an open run",
+        help_key: "esc / l / enter / h",
+        desc: "back to the dashboard; enter closes an open run",
         group: GLOBAL,
         footer: true,
         scope: Scope::All,
@@ -434,23 +443,23 @@ mod tests {
         );
         assert_eq!(
             footer_tokens(EDITOR, true),
-            "↑↓←→ move  enter toggle  ctrl+a all  ctrl+d none  / filter  tab section  ctrl+s save  esc back  q quit"
+            "↑↓←→ move  space/enter toggle  ctrl+a all  ctrl+d none  / filter  tab switch section  ctrl+s save  esc back  q quit"
         );
         assert_eq!(
             footer_tokens(EDITOR, false),
-            "↑↓←→ move  enter choose  tab section  ctrl+s save  esc back  q quit"
+            "↑↓ move  enter choose  tab switch section  ctrl+s save  esc back  q quit"
         );
         assert_eq!(
             footer_tokens(PRESET_PICKER, false),
-            "enter choose  esc back  q quit"
+            "enter choose  esc/l back  q quit"
         );
         assert_eq!(
             footer_tokens(LOGS_FOLLOW, false),
-            "x stop  ↑↓ scroll  esc back  q quit"
+            "↑↓ scroll  esc/l back  q quit"
         );
         assert_eq!(
             footer_tokens(LOGS_BROWSE, false),
-            "↑↓ move  esc back  q quit"
+            "↑↓ move  esc/l back  q quit"
         );
     }
 
@@ -480,7 +489,7 @@ mod tests {
         assert_eq!(spans[3].content, "  ");
         assert_eq!(spans[7].content, "  ");
         let text: String = spans.iter().map(|s| s.content.clone()).collect();
-        assert_eq!(text, "enter choose  esc back  q quit");
+        assert_eq!(text, "enter choose  esc/l back  q quit");
     }
 
     #[test]

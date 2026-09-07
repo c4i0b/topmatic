@@ -522,7 +522,7 @@ mod tests {
         }
         for action in [
             "edit the selected profile",
-            "delete profile",
+            "delete the profile",
             "run now",
             "toggle the activity panel",
             "filter profiles",
@@ -565,7 +565,7 @@ mod tests {
             "switch section",
             "filter the steps list",
             "save from anywhere in the editor",
-            "unsaved changes",
+            "asks when unsaved",
         ] {
             assert!(text.contains(action), "missing {action:?}:\n{text}");
         }
@@ -681,7 +681,7 @@ mod tests {
         steps_state.section = editor::Section::Steps;
         let steps_hint = footer_hints(&View::Editor(Box::new(steps_state)), false);
         assert!(
-            steps_hint.contains("enter toggle") && steps_hint.contains("ctrl+a all"),
+            steps_hint.contains("space/enter toggle") && steps_hint.contains("ctrl+a all"),
             "steps focus toggles and shows the bulk keys: {steps_hint}"
         );
         assert!(
@@ -689,9 +689,11 @@ mod tests {
             "the editor hint no longer advertises '/ filter'"
         );
         assert!(footer_hints(&View::Dashboard, false).contains("q quit"));
+        let follow = footer_hints(&View::Logs(crate::tui::logs::LogsState::follow("x")), false);
+        assert!(follow.contains("esc/l back"));
         assert!(
-            footer_hints(&View::Logs(crate::tui::logs::LogsState::follow("x")), false)
-                .contains("x stop")
+            !follow.contains("x stop"),
+            "the stopped-run feature was removed: {follow}"
         );
         assert!(footer_hints(&View::Dashboard, true).starts_with("filter"));
     }

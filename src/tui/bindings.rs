@@ -307,21 +307,21 @@ pub const LOGS_FOLLOW: &[Binding] = &[
 
 pub const LOGS_BROWSE: &[Binding] = &[
     Binding {
+        key: "↑↓",
+        verb: "move",
+        help_key: "↑/↓ or j/k",
+        desc: "move between runs and scroll an open log",
+        group: PROFILES,
+        footer: true,
+        scope: Scope::All,
+    },
+    Binding {
         key: "enter",
         verb: "open",
         help_key: "enter",
         desc: "open the highlighted run",
         group: PROFILES,
         footer: false,
-        scope: Scope::All,
-    },
-    Binding {
-        key: "r",
-        verb: "refresh",
-        help_key: "r",
-        desc: "reload the run list",
-        group: PROFILES,
-        footer: true,
         scope: Scope::All,
     },
     Binding {
@@ -450,7 +450,7 @@ mod tests {
         );
         assert_eq!(
             footer_tokens(LOGS_BROWSE, false),
-            "r refresh  esc back  q quit"
+            "↑↓ move  esc back  q quit"
         );
     }
 

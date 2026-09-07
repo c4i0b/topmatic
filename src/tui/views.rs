@@ -249,7 +249,10 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
         View::Dashboard => {
             "L activity  / filter  n new  e edit  d delete  r run now  l logs  ? help  q quit"
         }
-        View::Editor(_) => "↑↓←→ move  enter edit/save  tab section  esc back  q quit",
+        View::Editor(state) if state.is_dirty() => {
+            "ctrl+s save  esc save/leave  tab section  ↑↓←→ move  q quit"
+        }
+        View::Editor(_) => "↑↓←→ move  enter edit  tab section  esc back  q quit",
         View::PresetPicker { .. } => "enter choose  esc back  q quit",
         View::Logs(state) if state.follow => "x stop  ↑↓ scroll  esc back  q quit",
         View::Logs(_) => "enter open  h back  r refresh  esc back  q quit",
@@ -257,12 +260,17 @@ pub(crate) fn footer_hints(view: &View, filter_active: bool) -> &'static str {
 }
 
 fn draw_editor(state: &editor::EditorState, frame: &mut Frame, area: Rect) {
+    let dirty = if state.is_dirty() { " *" } else { "" };
     let title = match &state.original_name {
-        Some(name) => format!("edit profile — {name}"),
-        None => "new profile".to_string(),
+        Some(name) => format!("edit profile — {name}{dirty}"),
+        None => format!("new profile{dirty}"),
     };
     let paragraph = Paragraph::new(state.body_lines()).block(Block::bordered().title(title));
     frame.render_widget(paragraph, area);
+
+    if let Some(overlay) = &state.unsaved {
+        overlay.render(frame, area);
+    }
 
     if let Some(popup) = state.row_editor() {
         let lines = popup.lines();
@@ -410,11 +418,8 @@ pub(crate) fn editor_help() -> Vec<Line<'static>> {
         KeyGroup {
             title: "Save & leave",
             keys: &[
-                (
-                    "save row → enter",
-                    "type a name; enter saves and returns home",
-                ),
-                ("esc", "cancel a popup, the editor, or this help"),
+                ("ctrl+s", "save from anywhere in the editor"),
+                ("esc", "save or leave — asks when there are unsaved changes"),
                 ("q", "quit topmatic"),
             ],
         },
@@ -515,6 +520,30 @@ mod tests {
     }
 
     #[test]
+    fn editor_footer_hint_leads_with_save_when_dirty() {
+        let state = EditorState::new(
+            None,
+            Vec::new(),
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        assert!(
+            footer_hints(&View::Editor(Box::new(state)), false).contains("esc back"),
+            "a clean editor keeps the plain legend"
+        );
+        let mut dirty = EditorState::new(
+            None,
+            Vec::new(),
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        dirty.notify = crate::domain::profile::NotifyPolicy::Never;
+        let hint = footer_hints(&View::Editor(Box::new(dirty)), false);
+        assert!(
+            hint.starts_with("ctrl+s save"),
+            "a dirty editor leads with the save legend: {hint}"
+        );
+    }
+
+    #[test]
     fn editor_help_is_contextual() {
         let text: String = editor_help()
             .iter()
@@ -524,7 +553,8 @@ mod tests {
         for action in [
             "switch section",
             "filter the steps list",
-            "enter saves and returns home",
+            "save from anywhere in the editor",
+            "unsaved changes",
         ] {
             assert!(text.contains(action), "missing {action:?}:\n{text}");
         }
@@ -613,7 +643,7 @@ mod tests {
                 )),),
                 false
             )
-            .contains("enter edit/save")
+            .contains("enter edit")
         );
         assert!(
             !footer_hints(

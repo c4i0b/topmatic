@@ -102,16 +102,6 @@ impl EditorState {
             self.option_row_text()
         )));
 
-        lines.push(Line::from(""));
-        lines.push(Line::from(format!(
-            "{}{}",
-            if self.section == Section::Save {
-                "▶ "
-            } else {
-                "  "
-            },
-            self.save_row_text()
-        )));
         lines
     }
 
@@ -132,10 +122,6 @@ impl EditorState {
 
     fn option_row_text(&self) -> String {
         format!("notify: {}", notify_label(self.notify))
-    }
-
-    fn save_row_text(&self) -> String {
-        format!("save{}", if self.is_dirty() { " *" } else { "" })
     }
 }
 
@@ -210,8 +196,7 @@ mod tests {
         };
         let preset = row_position("preset:");
         let weekday = row_position("weekday:");
-        let save = row_position("save");
-        assert!(preset < weekday && weekday < save);
+        assert!(preset < weekday);
         assert!(
             !joined.contains("all-daily"),
             "the name is confirmed in its own popup, not the save row"
@@ -228,16 +213,6 @@ mod tests {
             !joined.contains("midnight anchored"),
             "the midnight hint is gone from the editor body"
         );
-    }
-
-    #[test]
-    fn save_row_marks_dirty_state() {
-        let mut editor = editing_editor();
-        editor.notify = NotifyPolicy::Never;
-        let lines = editor.body_lines();
-        let last = lines.last().unwrap();
-        assert!(line_text(last).contains("save *"));
-        assert!(!line_text(last).contains("all-daily"));
     }
 
     #[test]

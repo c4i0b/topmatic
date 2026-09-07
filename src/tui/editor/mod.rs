@@ -8,6 +8,7 @@ use crate::domain::schedule::{Schedule, SchedulePreset, Weekday, quick_choices};
 use crate::systemd::validate_on_calendar;
 
 use super::input::{FilterState, LineEdit};
+use super::overlay::{Overlay, OverlayAction};
 use popup::{RowEditor, RowEditorEvent, SelectTarget};
 
 pub mod popup;
@@ -18,15 +19,9 @@ pub enum Section {
     Steps,
     Schedule,
     Options,
-    Save,
 }
 
-const SECTIONS: [Section; 4] = [
-    Section::Steps,
-    Section::Schedule,
-    Section::Options,
-    Section::Save,
-];
+const SECTIONS: [Section; 3] = [Section::Steps, Section::Schedule, Section::Options];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScheduleRow {
@@ -42,6 +37,7 @@ pub struct EditorState {
     pub name_popup: Option<LineEdit>,
     pub confirmed_name: Option<String>,
     pub row_editor: Option<RowEditor>,
+    pub unsaved: Option<Overlay>,
     pub steps_filter: FilterState,
     pub steps_columns: usize,
     pub catalog: Vec<String>,
@@ -49,6 +45,7 @@ pub struct EditorState {
     pub schedule: Schedule,
     pub notify: NotifyPolicy,
     pub section: Section,
+    baseline: (BTreeSet<String>, Schedule, NotifyPolicy),
     pub list_index: usize,
     pub schedule_index: usize,
     pub jitter_secs: u64,
@@ -80,13 +77,19 @@ impl EditorState {
                     name_popup: None,
                     confirmed_name: None,
                     row_editor: None,
+                    unsaved: None,
                     steps_filter: FilterState::new(),
                     steps_columns: 1,
                     catalog,
                     selected_steps: profile.steps.iter().cloned().collect(),
-                    schedule,
+                    schedule: schedule.clone(),
                     notify: profile.notify,
                     section: Section::Steps,
+                    baseline: (
+                        profile.steps.iter().cloned().collect(),
+                        schedule.clone(),
+                        profile.notify,
+                    ),
                     list_index: 0,
                     schedule_index: 0,
                     jitter_secs,
@@ -100,13 +103,19 @@ impl EditorState {
                 name_popup: None,
                 confirmed_name: None,
                 row_editor: None,
+                unsaved: None,
                 steps_filter: FilterState::new(),
                 steps_columns: 1,
                 catalog,
                 selected_steps: BTreeSet::new(),
-                schedule: base_schedule,
+                schedule: base_schedule.clone(),
                 notify: NotifyPolicy::OnFailure,
                 section: Section::Steps,
+                baseline: (
+                    BTreeSet::new(),
+                    base_schedule.clone(),
+                    NotifyPolicy::OnFailure,
+                ),
                 list_index: 0,
                 schedule_index: 0,
                 jitter_secs,
@@ -123,6 +132,7 @@ impl EditorState {
         let mut editor = Self::new(None, catalog, jitter_secs);
         editor.selected_steps = steps.into_iter().collect();
         editor.suggested_name = Some(suggested_name.to_string());
+        editor.baseline = editor.baseline();
         editor
     }
 
@@ -177,12 +187,16 @@ impl EditorState {
     }
 
     pub fn is_dirty(&self) -> bool {
-        let Some(original) = &self.original else {
-            return true;
-        };
-        original.schedule != self.schedule
-            || original.notify != self.notify
-            || original.steps.iter().cloned().collect::<BTreeSet<String>>() != self.selected_steps
+        let (steps, schedule, notify) = &self.baseline;
+        *schedule != self.schedule || *notify != self.notify || *steps != self.selected_steps
+    }
+
+    fn baseline(&self) -> (BTreeSet<String>, Schedule, NotifyPolicy) {
+        (
+            self.selected_steps.clone(),
+            self.schedule.clone(),
+            self.notify,
+        )
     }
 
     pub fn to_profile(&self, name: &str) -> Result<Profile, String> {
@@ -205,6 +219,27 @@ impl EditorState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> EditorEvent {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('s' | 'S'))
+        {
+            if self.name_popup.is_some() {
+                return self.handle_popup_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            }
+            self.open_name_popup();
+            return EditorEvent::None;
+        }
+        if let Some(mut overlay) = self.unsaved.take() {
+            match overlay.handle_key(key) {
+                Some(OverlayAction::Selected(0)) => {
+                    self.open_name_popup();
+                    return EditorEvent::None;
+                }
+                Some(OverlayAction::Selected(_)) => return EditorEvent::Cancel,
+                Some(OverlayAction::Cancelled) => {}
+                None => self.unsaved = Some(overlay),
+            }
+            return EditorEvent::None;
+        }
         if self.name_popup.is_some() {
             return self.handle_popup_key(key);
         }
@@ -215,7 +250,12 @@ impl EditorState {
             return EditorEvent::Help;
         }
         if key.code == KeyCode::Esc && !self.steps_filter.is_engaged() {
-            return EditorEvent::Cancel;
+            if self.is_dirty() {
+                self.unsaved = Some(Self::unsaved_overlay());
+            } else {
+                return EditorEvent::Cancel;
+            }
+            return EditorEvent::None;
         }
         if key.code == KeyCode::Esc && self.steps_filter.is_engaged() {
             self.steps_filter.clear_query();
@@ -239,7 +279,6 @@ impl EditorState {
             Section::Steps => self.handle_steps_key(key),
             Section::Schedule => self.handle_schedule_key(key),
             Section::Options => self.handle_options_key(key),
-            Section::Save => self.handle_save_key(key),
         }
     }
 
@@ -307,7 +346,7 @@ impl EditorState {
     fn text_entry_focused(&self) -> bool {
         match self.section {
             Section::Steps => self.steps_filter.active,
-            Section::Schedule | Section::Options | Section::Save => false,
+            Section::Schedule | Section::Options => false,
         }
     }
 
@@ -398,11 +437,13 @@ impl EditorState {
         EditorEvent::None
     }
 
-    fn handle_save_key(&mut self, key: KeyEvent) -> EditorEvent {
-        if key.code == KeyCode::Enter {
-            self.open_name_popup();
-        }
-        EditorEvent::None
+    fn unsaved_overlay() -> Overlay {
+        Overlay::new(
+            "unsaved changes",
+            vec![ratatui::text::Line::from("save changes before leaving?")],
+            &["Save", "Discard", "Cancel"],
+            0,
+        )
     }
 
     fn open_row_editor(&mut self) {
@@ -448,10 +489,6 @@ impl EditorState {
                     .map(|policy| render::notify_label(*policy).to_string())
                     .collect();
                 RowEditor::select("notify", options, self.notify.index(), SelectTarget::Notify)
-            }
-            Section::Save => {
-                self.open_name_popup();
-                return;
             }
             Section::Steps => {
                 self.toggle_step_at(self.list_index);
@@ -594,11 +631,14 @@ mod tests {
         );
     }
 
+    fn ctrl_s() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
+    }
+
     #[test]
     fn save_flow_confirms_name_on_the_single_enter() {
         let mut editor = editing_editor();
-        editor.section = Section::Save;
-        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(ctrl_s());
         assert!(editor.name_popup.is_some());
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
@@ -615,13 +655,11 @@ mod tests {
     #[test]
     fn name_popup_esc_and_invalid_name_stay_in_the_editor() {
         let mut editor = editing_editor();
-        editor.section = Section::Save;
-        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(ctrl_s());
         assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::None);
         assert!(editor.name_popup.is_none(), "Esc closes the name popup");
-        assert!(matches!(editor.section, Section::Save));
 
-        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(ctrl_s());
         editor.name_popup = Some(LineEdit::new("bad name".to_string()));
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
@@ -648,8 +686,7 @@ mod tests {
         editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Down));
         editor.handle_key(key(KeyCode::Enter));
-        editor.section = Section::Save;
-        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(ctrl_s());
         editor.handle_key(key(KeyCode::Enter));
         assert_eq!(editor.confirmed_name.as_deref(), Some("all-weekly"));
         let profile = editor.to_profile("all-weekly").unwrap();
@@ -725,9 +762,7 @@ mod tests {
         editor.handle_key(key(KeyCode::Enter));
         assert_eq!(editor.notify, NotifyPolicy::Never);
 
-        editor.handle_key(key(KeyCode::Tab));
-        assert_eq!(editor.section, Section::Save);
-        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(ctrl_s());
         assert_eq!(editor.final_name(), "all-daily");
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
@@ -846,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_cycles_all_four_sections_and_wraps() {
+    fn tab_cycles_the_three_sections_and_wraps() {
         let mut editor = new_editor();
         assert_eq!(editor.section, Section::Steps);
         editor.handle_key(key(KeyCode::Tab));
@@ -854,25 +889,71 @@ mod tests {
         editor.handle_key(key(KeyCode::Tab));
         assert_eq!(editor.section, Section::Options);
         editor.handle_key(key(KeyCode::Tab));
-        assert_eq!(editor.section, Section::Save);
-        editor.handle_key(key(KeyCode::Enter));
-        assert!(editor.name_popup.is_some(), "Enter on save row opens popup");
-        editor.handle_key(key(KeyCode::Esc));
-        editor.handle_key(key(KeyCode::Tab));
         assert_eq!(editor.section, Section::Steps);
         editor.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
-        assert_eq!(editor.section, Section::Save);
+        assert_eq!(editor.section, Section::Options);
     }
 
     #[test]
     fn popup_rejects_invalid_names_by_staying_open() {
         let mut editor = editing_editor();
-        editor.section = Section::Save;
-        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(ctrl_s());
         editor.name_popup = Some(LineEdit::new(""));
         editor.handle_key(key(KeyCode::Enter));
         assert_eq!(editor.handle_key(key(KeyCode::Enter)), EditorEvent::None);
         assert!(editor.name_popup.is_some());
+    }
+
+    #[test]
+    fn esc_on_dirty_editor_offers_save_discard_and_cancel() {
+        let mut editor = editing_editor();
+        editor.notify = NotifyPolicy::Never;
+        assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::None);
+        assert!(
+            editor.unsaved.is_some(),
+            "a dirty editor asks before leaving"
+        );
+
+        assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::None);
+        assert!(
+            editor.unsaved.is_none(),
+            "esc dismisses the question and stays in the editor"
+        );
+
+        editor.handle_key(key(KeyCode::Esc));
+        editor.handle_key(key(KeyCode::Enter));
+        assert!(
+            editor.name_popup.is_some(),
+            "the Save option opens the name popup"
+        );
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Enter)),
+            EditorEvent::RequestSave
+        );
+    }
+
+    #[test]
+    fn esc_on_dirty_editor_discard_leaves_with_cancel_event() {
+        let mut editor = editing_editor();
+        editor.notify = NotifyPolicy::Never;
+        editor.handle_key(key(KeyCode::Esc));
+        editor.handle_key(key(KeyCode::Down));
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Enter)),
+            EditorEvent::Cancel,
+            "Discard leaves like the old cancel"
+        );
+    }
+
+    #[test]
+    fn untouched_new_editor_leaves_silently_on_esc() {
+        let mut editor = new_editor();
+        assert!(!editor.is_dirty());
+        assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::Cancel);
+        assert!(
+            editor.unsaved.is_none(),
+            "nothing was changed, nothing to ask"
+        );
     }
 
     #[test]
@@ -883,7 +964,16 @@ mod tests {
         assert!(editor.is_dirty());
 
         let creating = new_editor();
-        assert!(creating.is_dirty(), "new profiles always show the marker");
+        assert!(
+            !creating.is_dirty(),
+            "an untouched new profile is clean — esc leaves silently"
+        );
+        let mut touched = new_editor();
+        touched.handle_key(key(KeyCode::Char(' ')));
+        assert!(
+            touched.is_dirty(),
+            "toggling one step makes a new profile dirty"
+        );
     }
 
     #[test]
@@ -1094,8 +1184,7 @@ mod tests {
     #[test]
     fn editing_prefills_popup_with_current_name() {
         let mut editor = editing_editor();
-        editor.section = Section::Save;
-        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(ctrl_s());
         assert_eq!(editor.final_name(), "all-daily");
         assert_eq!(
             editor.handle_key(key(KeyCode::Enter)),
@@ -1119,8 +1208,7 @@ mod tests {
         );
         assert!(editor.creating);
         assert!(editor.selected_steps.contains("flatpak"));
-        editor.section = Section::Save;
-        editor.handle_key(key(KeyCode::Enter));
+        editor.handle_key(ctrl_s());
         assert_eq!(editor.final_name(), "flatpak-daily");
         let profile = editor.to_profile(&editor.final_name()).unwrap();
         assert_eq!(profile.name, "flatpak-daily");

@@ -923,10 +923,7 @@ mod tests {
     }
 
     fn save_editor_profile(app: &mut App, prefill: &str, name: &str) {
-        for _ in 0..3 {
-            app.handle_key(key(KeyCode::Tab));
-        }
-        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
         for _ in 0..prefill.chars().count() {
             app.handle_key(key(KeyCode::Backspace));
         }
@@ -1848,11 +1845,17 @@ mod tests {
         app.handle_key(key(KeyCode::Char(' ')));
         app.handle_key(key(KeyCode::Esc));
         assert!(
+            matches!(&app.view, View::Editor(state) if state.unsaved.is_some()),
+            "esc on a dirty editor asks instead of leaving"
+        );
+        app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(
             harness
                 .all_texts()
                 .iter()
                 .any(|text| text.contains("changes discarded")),
-            "dropping edits lands in the activity log"
+            "choosing Discard leaves and lands in the activity log"
         );
     }
 

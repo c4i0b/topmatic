@@ -1,0 +1,30 @@
+[package]
+name = "topmatic"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+description = "User-level scheduled updates powered by topgrade"
+repository = "https://github.com/c4i0b/topmatic"
+readme = "README.md"
+keywords = ["tui", "systemd", "updater", "scheduler", "topgrade"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+ratatui = "0.29"
+crossterm = "0.28"
+fd-lock = "4"
+humantime = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+strip = true

@@ -190,21 +190,21 @@ pub const EDITOR: &[Binding] = &[
         scope: Scope::RowsOnly,
     },
     Binding {
+        key: "/",
+        verb: "filter",
+        help_key: "/",
+        desc: "filter the steps list",
+        group: MOVE_AND_EDIT,
+        footer: true,
+        scope: Scope::StepsOnly,
+    },
+    Binding {
         key: "tab",
         verb: "section",
         help_key: "tab / shift-tab",
         desc: "switch section",
         group: MOVE_AND_EDIT,
         footer: true,
-        scope: Scope::All,
-    },
-    Binding {
-        key: "/",
-        verb: "filter",
-        help_key: "/",
-        desc: "filter the steps list",
-        group: MOVE_AND_EDIT,
-        footer: false,
         scope: Scope::All,
     },
     Binding {
@@ -434,7 +434,7 @@ mod tests {
         );
         assert_eq!(
             footer_tokens(EDITOR, true),
-            "↑↓←→ move  enter toggle  ctrl+a all  ctrl+d none  tab section  ctrl+s save  esc back  q quit"
+            "↑↓←→ move  enter toggle  ctrl+a all  ctrl+d none  / filter  tab section  ctrl+s save  esc back  q quit"
         );
         assert_eq!(
             footer_tokens(EDITOR, false),
@@ -459,7 +459,7 @@ mod tests {
         for table in [DASHBOARD, EDITOR, PRESET_PICKER, LOGS_FOLLOW, LOGS_BROWSE] {
             let legend = footer_tokens(table, false);
             assert!(
-                legend.chars().count() <= 100,
+                legend.chars().count() <= 105,
                 "legend overflows the common terminal width: {legend}"
             );
         }

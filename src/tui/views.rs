@@ -522,7 +522,7 @@ mod tests {
         }
         for action in [
             "edit the selected profile",
-            "delete profile",
+            "delete the profile",
             "run now",
             "toggle the activity panel",
             "filter profiles",
@@ -565,7 +565,7 @@ mod tests {
             "switch section",
             "filter the steps list",
             "save from anywhere in the editor",
-            "unsaved changes",
+            "asks when unsaved",
         ] {
             assert!(text.contains(action), "missing {action:?}:\n{text}");
         }

@@ -12,12 +12,12 @@ pub const PRESETS: &[Preset] = &[
     },
     Preset {
         label: "Dev tools",
-        description: "runtimes, editors and tooling only",
+        description: "updates your dev tools and editors only",
         suggested_name: "dev-daily",
     },
     Preset {
         label: "Flatpak",
-        description: "apps and runtimes only",
+        description: "updates flatpak apps and runtimes only",
         suggested_name: "flatpak-daily",
     },
 ];

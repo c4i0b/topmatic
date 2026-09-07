@@ -567,7 +567,6 @@ impl App {
                 if state.follow && matches!(key.code, KeyCode::Char('x' | 'X')) {
                     let profile = state.profile.clone();
                     self.stop_run(&profile);
-                    self.view = View::Logs(state);
                     return;
                 }
                 if state.handle_key(key) {

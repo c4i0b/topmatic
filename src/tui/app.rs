@@ -21,7 +21,7 @@ use super::logs;
 use super::overlay::{Overlay, OverlayAction};
 use super::presets;
 use super::views;
-use crate::domain::profile::{NotifyPolicy, Profile, Scope};
+use crate::domain::profile::{NotifyPolicy, Profile};
 
 const MESSAGE_TTL_TICKS: u64 = 25;
 const MIN_LOADING_TIME: Duration = Duration::from_millis(120);
@@ -766,7 +766,6 @@ impl App {
                 self.config.defaults.resolved().random_delay.as_secs(),
             ),
             notify: NotifyPolicy::default(),
-            scope: Scope::User,
         };
         self.log(ActivityKind::Action, format!("activated preset {base}"));
         self.config.upsert(profile);
@@ -866,7 +865,7 @@ fn command_sink(activity: &Arc<Mutex<ActivityLog>>) -> Arc<dyn Fn(&str) + Send +
 mod tests {
 
     use super::*;
-    use crate::domain::profile::{NotifyPolicy, Profile, Scope};
+    use crate::domain::profile::{NotifyPolicy, Profile};
     use crate::domain::schedule::Schedule;
     use crate::systemd::test_support::FakeCtl;
     use crate::tui::views;
@@ -917,7 +916,6 @@ mod tests {
             steps: vec!["flatpak".to_string()],
             schedule: Schedule::default(),
             notify: NotifyPolicy::OnFailure,
-            scope: Scope::User,
         }
     }
 

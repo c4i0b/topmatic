@@ -166,7 +166,7 @@ pub(crate) fn notify_label(policy: NotifyPolicy) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::profile::{NotifyPolicy, Profile, Scope};
+    use crate::domain::profile::{NotifyPolicy, Profile};
     use crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC;
     use crate::domain::schedule::Schedule;
     use crate::domain::schedule::quick_choices;
@@ -180,7 +180,6 @@ mod tests {
             steps: vec!["flatpak".to_string()],
             schedule: Schedule::default(),
             notify: NotifyPolicy::OnFailure,
-            scope: Scope::User,
         };
         EditorState::new(
             Some(&profile),

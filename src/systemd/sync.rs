@@ -3,7 +3,6 @@ use std::fs;
 use std::io;
 
 use crate::config::AppConfig;
-use crate::domain::profile::Scope;
 use crate::domain::schedule::SchedulePreset;
 use crate::paths::Paths;
 use crate::util::write_file_if_changed;
@@ -43,7 +42,7 @@ pub fn sync(
     let mut report = SyncReport::default();
     let unit_dir = ctl.unit_dir();
 
-    let service = units::service_unit(topmatic_bin, Scope::User);
+    let service = units::service_unit(topmatic_bin);
     let timer = units::timer_unit();
     match write_file_if_changed(&unit_dir.join(units::SERVICE_TEMPLATE), &service).and_then(
         |changed_service| {
@@ -102,13 +101,6 @@ fn sync_profiles(
     let mut known = BTreeSet::new();
     for profile in &config.profiles {
         known.insert(profile.name.clone());
-        if profile.scope == Scope::System {
-            report.errors.push(format!(
-                "{}: system scope is not supported yet",
-                profile.name
-            ));
-            continue;
-        }
         if let SchedulePreset::Custom { calendar } = &profile.schedule.preset
             && let Err(error) = super::validate_on_calendar(calendar)
         {
@@ -217,7 +209,6 @@ mod tests {
                 randomized_delay_sec: 900,
             },
             notify: NotifyPolicy::OnFailure,
-            scope: Scope::User,
         }
     }
 
@@ -337,20 +328,6 @@ mod tests {
             "no enabled timer means nothing to disable"
         );
         assert!(report.ignored_foreign.is_empty());
-    }
-
-    #[test]
-    fn system_scope_is_reported_as_unsupported() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ctl = FakeCtl::new(tmp.path().to_path_buf());
-        let mut system_profile = profile("sysjob");
-        system_profile.scope = Scope::System;
-        let config = config_of(&[system_profile]);
-
-        let report = sync(&config, std::path::Path::new("/bin/topmatic"), &ctl);
-
-        assert_eq!(report.errors.len(), 1);
-        assert!(report.errors[0].contains("system scope is not supported yet"));
     }
 
     #[test]

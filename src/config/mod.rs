@@ -458,7 +458,6 @@ mod tests {
             steps: vec!["flatpak".to_string()],
             schedule: Schedule::default(),
             notify: Default::default(),
-            scope: Default::default(),
         }
     }
 

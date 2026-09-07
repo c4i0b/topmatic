@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use crate::domain::profile::Scope;
 use crate::domain::schedule::Schedule;
 
 pub const SERVICE_TEMPLATE: &str = "topmatic@.service";
@@ -12,16 +11,10 @@ pub struct ScopeDirs {
     pub systemctl_user_args: Vec<String>,
 }
 
-pub fn scope_dirs(scope: Scope, home: &Path) -> ScopeDirs {
-    match scope {
-        Scope::User => ScopeDirs {
-            units_dir: home.join(".config/systemd/user"),
-            systemctl_user_args: vec!["--user".to_string()],
-        },
-        Scope::System => ScopeDirs {
-            units_dir: PathBuf::from("/etc/systemd/system"),
-            systemctl_user_args: Vec::new(),
-        },
+pub fn scope_dirs(home: &Path) -> ScopeDirs {
+    ScopeDirs {
+        units_dir: home.join(".config/systemd/user"),
+        systemctl_user_args: vec!["--user".to_string()],
     }
 }
 
@@ -49,11 +42,8 @@ pub fn drop_in_dir(profile: &str) -> String {
     format!("topmatic@{profile}.timer.d")
 }
 
-pub fn service_unit(topmatic_bin: &Path, scope: Scope) -> String {
-    let path_env = match scope {
-        Scope::User => "%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin",
-        Scope::System => "/usr/local/bin:/usr/bin:/bin",
-    };
+pub fn service_unit(topmatic_bin: &Path) -> String {
+    let path_env = "%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin";
     format!(
         "[Unit]\n\
          Description=topmatic run for profile %i\n\
@@ -119,7 +109,7 @@ mod tests {
 
     #[test]
     fn scope_dirs_target_user_units_without_root() {
-        let dirs = scope_dirs(Scope::User, Path::new("/home/caio"));
+        let dirs = scope_dirs(Path::new("/home/caio"));
         assert_eq!(
             dirs.units_dir,
             PathBuf::from("/home/caio/.config/systemd/user")
@@ -128,15 +118,8 @@ mod tests {
     }
 
     #[test]
-    fn scope_dirs_target_system_units_for_future_support() {
-        let dirs = scope_dirs(Scope::System, Path::new("/home/caio"));
-        assert_eq!(dirs.units_dir, PathBuf::from("/etc/systemd/system"));
-        assert!(dirs.systemctl_user_args.is_empty());
-    }
-
-    #[test]
     fn service_unit_references_absolute_binary_and_instance() {
-        let unit = service_unit(Path::new("/home/caio/.cargo/bin/topmatic"), Scope::User);
+        let unit = service_unit(Path::new("/home/caio/.cargo/bin/topmatic"));
         assert!(unit.contains("ExecStart=/home/caio/.cargo/bin/topmatic run %i"));
         assert!(
             unit.contains(
@@ -148,7 +131,7 @@ mod tests {
 
     #[test]
     fn service_unit_runs_at_minimum_priority() {
-        let unit = service_unit(Path::new("/bin/topmatic"), Scope::User);
+        let unit = service_unit(Path::new("/bin/topmatic"));
         assert!(unit.contains("Nice=19"));
         assert!(unit.contains("CPUSchedulingPolicy=batch"));
         assert!(unit.contains("IOSchedulingClass=idle"));

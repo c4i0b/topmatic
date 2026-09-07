@@ -116,7 +116,6 @@ pub fn step_delta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::profile::Scope;
 
     fn catalog() -> Vec<String> {
         ["cargo", "rustup", "node", "flatpak", "vim"]
@@ -134,7 +133,6 @@ mod tests {
             excluded_steps: Vec::new(),
             schedule: Schedule::default(),
             notify: NotifyPolicy::default(),
-            scope: Scope::User,
         }
     }
 

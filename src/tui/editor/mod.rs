@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::domain::profile::{NotifyPolicy, Profile, Scope, sanitize_name};
+use crate::domain::profile::{NotifyPolicy, Profile, sanitize_name};
 use crate::domain::schedule::{Schedule, SchedulePreset, Weekday, quick_choices};
 
 use crate::systemd::validate_on_calendar;
@@ -239,7 +239,6 @@ impl EditorState {
                     randomized_delay_sec: self.schedule.randomized_delay_sec,
                 },
                 notify: self.notify,
-                scope: Scope::User,
             });
         }
         let name = sanitize_name(name).map_err(|error| error.to_string())?;
@@ -259,7 +258,6 @@ impl EditorState {
                 randomized_delay_sec: self.schedule.randomized_delay_sec,
             },
             notify: self.notify,
-            scope: Scope::User,
         })
     }
 
@@ -661,7 +659,6 @@ mod tests {
             steps: vec!["flatpak".to_string()],
             schedule: Schedule::default(),
             notify: NotifyPolicy::OnFailure,
-            scope: Scope::User,
         };
         EditorState::new(Some(&profile), catalog_entries(), DEFAULT_RANDOM_DELAY_SEC)
     }

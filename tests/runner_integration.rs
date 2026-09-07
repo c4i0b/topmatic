@@ -107,7 +107,6 @@ impl Fixture {
             excluded_steps: Vec::new(),
             schedule: Schedule::default(),
             notify,
-            scope: Default::default(),
         }
     }
 

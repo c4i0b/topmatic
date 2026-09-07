@@ -3,14 +3,6 @@ use serde::{Deserialize, Serialize};
 use super::schedule::Schedule;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum Scope {
-    #[default]
-    User,
-    System,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum NotifyPolicy {
     Always,
@@ -53,8 +45,6 @@ pub struct Profile {
     pub schedule: Schedule,
     #[serde(default)]
     pub notify: NotifyPolicy,
-    #[serde(default)]
-    pub scope: Scope,
 }
 
 impl Serialize for Profile {
@@ -85,7 +75,6 @@ impl Serialize for Profile {
         if !overlay || self.notify != NotifyPolicy::default() {
             state.serialize_field("notify", &self.notify)?;
         }
-        state.serialize_field("scope", &self.scope)?;
         state.end()
     }
 }
@@ -159,7 +148,6 @@ mod tests {
         assert_eq!(profile.name, "flatpak-daily");
         assert_eq!(profile.steps, vec!["flatpak"]);
         assert_eq!(profile.notify, NotifyPolicy::OnFailure);
-        assert_eq!(profile.scope, Scope::User);
     }
 
     #[test]
@@ -175,6 +163,5 @@ mod tests {
         let text = profile_toml("notify = 'always'\nscope = 'system'");
         let profile: Profile = toml::from_str(&text).unwrap();
         assert_eq!(profile.notify, NotifyPolicy::Always);
-        assert_eq!(profile.scope, Scope::System);
     }
 }

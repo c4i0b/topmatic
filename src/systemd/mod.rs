@@ -6,8 +6,6 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::domain::profile::Scope;
-
 pub mod reset;
 pub mod sync;
 pub mod units;
@@ -60,7 +58,7 @@ impl RealSystemdCtl {
 
 impl SystemdCtl for RealSystemdCtl {
     fn unit_dir(&self) -> PathBuf {
-        units::scope_dirs(Scope::User, &self.home).units_dir
+        units::scope_dirs(&self.home).units_dir
     }
 
     fn daemon_reload(&self) -> io::Result<()> {

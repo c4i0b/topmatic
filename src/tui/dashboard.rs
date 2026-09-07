@@ -311,7 +311,6 @@ mod tests {
             steps: (0..steps).map(|i| format!("step_{i}")).collect(),
             schedule: crate::domain::schedule::Schedule::default(),
             notify: crate::domain::profile::NotifyPolicy::OnFailure,
-            scope: crate::domain::profile::Scope::User,
         }
     }
 
@@ -450,7 +449,6 @@ mod tests {
             ],
             schedule: crate::domain::schedule::Schedule::default(),
             notify: crate::domain::profile::NotifyPolicy::OnFailure,
-            scope: crate::domain::profile::Scope::User,
         };
         let row = ProfileRow {
             name: "all-daily".to_string(),

@@ -1,7 +1,6 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -10,7 +9,7 @@ use ratatui::layout::Rect;
 use crate::activity::{ActivityKind, ActivityLog};
 use crate::config::{self, AppConfig};
 use crate::paths::Paths;
-use crate::runner::{read_status, resolve};
+use crate::runner::resolve;
 use crate::systemd::{RealSystemdCtl, SystemdCtl, sync as systemd_sync};
 
 use super::View;
@@ -21,36 +20,14 @@ use super::logs;
 use super::overlay::{Overlay, OverlayAction};
 use super::presets;
 use super::views;
-use crate::domain::profile::{NotifyPolicy, Profile};
+#[cfg(test)]
+use jobs::FOLLOW_LINGER_TICKS;
+use jobs::MESSAGE_TTL_TICKS;
 
-const MESSAGE_TTL_TICKS: u64 = 25;
-const FOLLOW_LINGER_TICKS: u32 = 8;
-const MIN_LOADING_TIME: Duration = Duration::from_millis(120);
+mod jobs;
+mod runs;
 
-pub struct ResolvedBins {
-    topmatic_bin: PathBuf,
-    topgrade_bin: Option<PathBuf>,
-}
-
-impl ResolvedBins {
-    pub fn new(topmatic_bin: PathBuf, topgrade_bin: Option<PathBuf>) -> Self {
-        Self {
-            topmatic_bin,
-            topgrade_bin,
-        }
-    }
-}
-
-pub struct BackgroundJob {
-    pub label: String,
-    pub started: Instant,
-    pub shared: Arc<Mutex<Option<JobOutcome>>>,
-}
-
-pub enum JobOutcome {
-    Success(String),
-    Error(String),
-}
+pub use jobs::{BackgroundJob, JobOutcome};
 
 pub struct App {
     pub config: AppConfig,
@@ -79,6 +56,20 @@ pub struct App {
     pub help: Option<Overlay>,
     pub should_quit: bool,
     pub tick: u64,
+}
+
+pub struct ResolvedBins {
+    topmatic_bin: PathBuf,
+    topgrade_bin: Option<PathBuf>,
+}
+
+impl ResolvedBins {
+    pub fn new(topmatic_bin: PathBuf, topgrade_bin: Option<PathBuf>) -> Self {
+        Self {
+            topmatic_bin,
+            topgrade_bin,
+        }
+    }
 }
 
 impl App {
@@ -227,107 +218,8 @@ impl App {
         presets::fallback_catalog()
     }
 
-    pub fn live_snapshot(&self, name: &str) -> dashboard::LiveSnapshot {
-        dashboard::LiveSnapshot {
-            name: name.to_string(),
-            running: self.ctl.service_active(name),
-            running_since: self.ctl.service_since(name),
-            status: read_status(&self.paths, name).ok().flatten(),
-        }
-    }
-
-    pub fn rebuild_rows(&mut self) {
-        self.rows = self
-            .config
-            .profiles
-            .iter()
-            .map(|profile| {
-                let snap = self.live_snapshot(&profile.name);
-                dashboard::ProfileRow {
-                    name: snap.name.clone(),
-                    schedule: profile.schedule.summary(),
-                    next_run: self.ctl.next_run(&profile.name),
-                    status: snap.status,
-                    timer_active: self.ctl.timer_active(&profile.name),
-                    running: snap.running,
-                    running_since: snap.running_since,
-                }
-            })
-            .collect();
-        self.clamp_selection();
-    }
-
     pub fn log(&mut self, kind: ActivityKind, text: impl Into<String>) {
         self.activity.lock().unwrap().log(kind, text.into());
-    }
-
-    fn set_error_message(&mut self, text: String) {
-        self.message = text;
-        self.message_is_error = true;
-    }
-
-    fn clear_error_message(&mut self) {
-        if self.message_is_error {
-            self.message.clear();
-            self.seen_message.clear();
-            self.message_is_error = false;
-        }
-    }
-
-    pub fn spawn_background(
-        &mut self,
-        label: impl Into<String>,
-        work: impl FnOnce() -> JobOutcome + Send + 'static,
-    ) {
-        let shared = Arc::new(Mutex::new(None));
-        let thread_shared = Arc::clone(&shared);
-        std::thread::spawn(move || *thread_shared.lock().unwrap() = Some(work()));
-        self.in_flight = Some(BackgroundJob {
-            label: label.into(),
-            started: Instant::now(),
-            shared,
-        });
-    }
-
-    fn spawn_sync_job(
-        &mut self,
-        label: String,
-        on_report: impl FnOnce(&crate::systemd::sync::SyncReport) -> JobOutcome + Send + 'static,
-    ) {
-        let ctl = (self.controller_factory)();
-        let config = self.config.clone();
-        let bin = self.topmatic_bin.clone();
-        self.spawn_background(label, move || {
-            let report = systemd_sync::sync(&config, &bin, ctl.as_ref());
-            on_report(&report)
-        });
-    }
-
-    pub fn poll_in_flight(&mut self) -> bool {
-        let Some(job) = self.in_flight.take() else {
-            return false;
-        };
-        let Some(outcome) = job.shared.lock().unwrap().take() else {
-            self.in_flight = Some(job);
-            return false;
-        };
-        if job.started.elapsed() < MIN_LOADING_TIME {
-            job.shared.lock().unwrap().replace(outcome);
-            self.in_flight = Some(job);
-            return false;
-        }
-        match outcome {
-            JobOutcome::Success(action) => {
-                self.log(ActivityKind::Action, action);
-                self.clear_error_message();
-            }
-            JobOutcome::Error(message) => {
-                self.log(ActivityKind::Error, message.clone());
-                self.set_error_message(message);
-            }
-        }
-        self.rebuild_rows();
-        true
     }
 
     pub fn set_editor_layout(&mut self, width: u16, height: u16) {
@@ -354,92 +246,6 @@ impl App {
         let any_running = self.rows.iter().any(|row| row.running);
         if follow_open || any_running || self.tick.is_multiple_of(30) {
             self.refresh_live_state();
-        }
-    }
-
-    fn refresh_live_state(&mut self) {
-        let previous: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = self
-            .rows
-            .iter()
-            .filter(|row| row.running)
-            .map(|row| (row.name.clone(), row.running_since))
-            .collect();
-        self.rebuild_rows();
-        for (name, since) in previous {
-            if self.rows.iter().any(|row| row.name == name && row.running) {
-                continue;
-            }
-            let status = match self.rows.iter().find(|row| row.name == name) {
-                Some(row) => row.status.clone(),
-                None => read_status(&self.paths, &name).ok().flatten(),
-            };
-            let status = status.as_ref();
-            let finished_after_start = status
-                .is_some_and(|outcome| since.is_some_and(|start| outcome.finished_at > start));
-            match (status, finished_after_start) {
-                (Some(outcome), true) if outcome.success => {
-                    self.log(ActivityKind::Action, format!("{name} finished ok"));
-                }
-                (Some(outcome), true) => {
-                    let detail =
-                        format!("{name} FAILED (exit {:?})", outcome.exit_code.unwrap_or(1));
-                    self.set_error_message(detail.clone());
-                    self.log(ActivityKind::Error, detail);
-                }
-                _ => self.log(ActivityKind::Action, format!("{name} stopped")),
-            }
-        }
-        if let View::Logs(state) = &mut self.view
-            && state.follow
-        {
-            let profile = state.profile.clone();
-            let row = self.rows.iter().find(|row| row.name == profile);
-            let running = row.is_some_and(|row| row.running);
-            let since = row.and_then(|row| row.running_since);
-            let status = match row.as_ref().map(|row| row.status.clone()) {
-                Some(status) => status,
-                None => read_status(&self.paths, &profile).ok().flatten(),
-            };
-            let stale = since.is_some_and(|start| {
-                status
-                    .as_ref()
-                    .is_some_and(|outcome| outcome.finished_at <= start)
-            });
-            let elapsed = since
-                .map(|since| dashboard::format_elapsed(chrono::Utc::now() - since))
-                .unwrap_or_default();
-            state.follow_header = if running {
-                format!("running {profile} · {elapsed}")
-            } else if stale {
-                format!("{profile} not running")
-            } else {
-                match status.as_ref() {
-                    Some(outcome) if outcome.skipped => {
-                        format!("{profile} skipped — a run was already active")
-                    }
-                    Some(outcome) if outcome.success => format!("{profile} finished ok"),
-                    Some(outcome) => format!(
-                        "{profile} FAILED (exit {:?})",
-                        outcome.exit_code.unwrap_or(1)
-                    ),
-                    None => format!("{profile} not running"),
-                }
-            };
-            state.set_content(logs::tail(&self.paths, &profile, 200));
-            let finished_fresh = !running && !stale && status.is_some();
-            if running {
-                state.auto_close = None;
-            } else if finished_fresh && state.auto_close.is_none() && !state.linger_canceled {
-                state.auto_close = Some(FOLLOW_LINGER_TICKS);
-            }
-            if let Some(remaining) = state.auto_close
-                && let Some(left) = remaining.checked_sub(1)
-            {
-                state.auto_close = Some(left);
-            } else if state.auto_close.is_some() {
-                state.auto_close = None;
-                self.view = View::Dashboard;
-            }
         }
     }
 
@@ -762,40 +568,6 @@ impl App {
         });
     }
 
-    fn activate_preset(&mut self, index: usize) {
-        let preset = &presets::PRESETS[index];
-        let base = crate::domain::presets::PRESET_IDS[index];
-        let name = preset.suggested_name.to_string();
-        if self.config.profiles.iter().any(|p| p.name == name) {
-            self.set_error_message(format!("{name} is already active"));
-            return;
-        }
-        let profile = Profile {
-            name,
-            steps: Vec::new(),
-            base: Some(base.to_string()),
-            extra_steps: Vec::new(),
-            excluded_steps: Vec::new(),
-            schedule: crate::domain::schedule::daily_choice(
-                self.config.defaults.resolved().random_delay.as_secs(),
-            ),
-            notify: NotifyPolicy::default(),
-        };
-        self.log(ActivityKind::Action, format!("activated preset {base}"));
-        self.config.upsert(profile);
-        if let Err(error) = config::save(&self.paths, &self.config) {
-            self.set_error_message(format!("save failed: {error}"));
-            return;
-        }
-        self.spawn_sync_job(format!("activating {base}"), move |report| {
-            if report.errors.is_empty() {
-                JobOutcome::Success(format!("activated {base}"))
-            } else {
-                JobOutcome::Error(format!("sync errors: {}", report.errors.join("; ")))
-            }
-        });
-    }
-
     fn delete_profile(&mut self, name: &str) {
         self.config.remove(name);
         if let Err(error) = config::save(&self.paths, &self.config) {
@@ -814,40 +586,6 @@ impl App {
         });
         self.view = View::Dashboard;
         self.selected = 0;
-    }
-
-    fn run_now(&mut self) {
-        let Some(row) = self.selected_row() else {
-            return;
-        };
-        let name = row.name.clone();
-        if row.running {
-            self.log(ActivityKind::Action, format!("{name} already running"));
-            self.view = View::Logs(logs::LogsState::follow(&name));
-            return;
-        }
-        self.log(ActivityKind::Action, format!("starting {name}"));
-        let ctl = (self.controller_factory)();
-        let name_for_job = name.clone();
-        self.spawn_background(format!("starting {name}"), move || {
-            match ctl.start_service(&name_for_job) {
-                Ok(()) => JobOutcome::Success(format!("started {name_for_job}")),
-                Err(error) => JobOutcome::Error(format!("start failed: {error}")),
-            }
-        });
-        self.view = View::Logs(logs::LogsState::follow(&name));
-    }
-
-    fn stop_run(&mut self, profile: &str) {
-        self.log(ActivityKind::Action, format!("stopping {profile}"));
-        let ctl = (self.controller_factory)();
-        let name = profile.to_string();
-        self.spawn_background(format!("stopping {name}"), move || {
-            match ctl.stop_service(&name) {
-                Ok(()) => JobOutcome::Success(format!("stopped {name}")),
-                Err(error) => JobOutcome::Error(format!("stop failed: {error}")),
-            }
-        });
     }
 
     fn open_logs(&mut self) {

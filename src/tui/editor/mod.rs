@@ -132,7 +132,6 @@ impl EditorState {
         let mut editor = Self::new(None, catalog, jitter_secs);
         editor.selected_steps = steps.into_iter().collect();
         editor.suggested_name = Some(suggested_name.to_string());
-        editor.baseline = editor.baseline();
         editor
     }
 
@@ -187,16 +186,11 @@ impl EditorState {
     }
 
     pub fn is_dirty(&self) -> bool {
+        if self.creating {
+            return !self.selected_steps.is_empty();
+        }
         let (steps, schedule, notify) = &self.baseline;
         *schedule != self.schedule || *notify != self.notify || *steps != self.selected_steps
-    }
-
-    fn baseline(&self) -> (BTreeSet<String>, Schedule, NotifyPolicy) {
-        (
-            self.selected_steps.clone(),
-            self.schedule.clone(),
-            self.notify,
-        )
     }
 
     pub fn to_profile(&self, name: &str) -> Result<Profile, String> {
@@ -946,6 +940,36 @@ mod tests {
     }
 
     #[test]
+    fn preset_create_asks_on_esc_and_clearing_marks_returns_silent() {
+        let mut editor = EditorState::from_preset(
+            catalog_entries(),
+            vec!["flatpak".to_string()],
+            "flatpak-daily",
+            DEFAULT_RANDOM_DELAY_SEC,
+        );
+        assert!(
+            editor.is_dirty(),
+            "a preset pre-marks steps: there is something to save, esc asks"
+        );
+        assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::None);
+        assert!(editor.unsaved.is_some());
+
+        assert_eq!(editor.handle_key(key(KeyCode::Esc)), EditorEvent::None);
+        editor.steps_filter.edit = LineEdit::new("flatpak");
+        editor.handle_key(key(KeyCode::Char(' ')));
+        assert!(
+            !editor.is_dirty(),
+            "unchecking every marked box leaves nothing worth saving"
+        );
+        editor.handle_key(key(KeyCode::Esc));
+        assert_eq!(
+            editor.handle_key(key(KeyCode::Esc)),
+            EditorEvent::Cancel,
+            "esc leaves silently once the filter is cleared and nothing is marked"
+        );
+    }
+
+    #[test]
     fn untouched_new_editor_leaves_silently_on_esc() {
         let mut editor = new_editor();
         assert!(!editor.is_dirty());
@@ -966,7 +990,7 @@ mod tests {
         let creating = new_editor();
         assert!(
             !creating.is_dirty(),
-            "an untouched new profile is clean — esc leaves silently"
+            "a blank new profile with no marks is clean — esc leaves silently"
         );
         let mut touched = new_editor();
         touched.handle_key(key(KeyCode::Char(' ')));

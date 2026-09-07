@@ -214,7 +214,10 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) -> PaneAreas {
             let line = if index == app.selected {
                 Line::styled(
                     format!("▶ {}", row.name),
-                    Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::DarkGray),
                 )
             } else {
                 Line::from(format!("  {}", row.name))

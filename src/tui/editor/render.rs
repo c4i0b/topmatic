@@ -61,7 +61,7 @@ impl EditorState {
                     .unwrap_or(0)
             })
             .collect();
-        for row in &grid {
+        for (row_index, row) in grid.iter().enumerate() {
             let mut with_gaps: Vec<Span> = Vec::with_capacity(row.len() * 2);
             for (column, cell) in row.iter().enumerate() {
                 if let Some(cell) = cell {
@@ -72,7 +72,15 @@ impl EditorState {
                     with_gaps.push(Span::raw(format!("{cell}{}", " ".repeat(padding))));
                 }
             }
-            lines.push(Line::from(with_gaps));
+            let focused_row = focus_steps
+                && (steps_start + row_index * columns..steps_start + (row_index + 1) * columns)
+                    .contains(&self.list_index);
+            let line = Line::from(with_gaps);
+            if focused_row {
+                lines.push(line.style(Style::new().bg(Color::DarkGray)));
+            } else {
+                lines.push(line);
+            }
         }
 
         lines.push(Line::from(""));
@@ -420,6 +428,35 @@ mod tests {
             second_offsets[2] - second_offsets[1],
             "column 3 starts at the same offset on every row"
         );
+    }
+
+    #[test]
+    fn focused_grid_row_gets_a_full_width_background() {
+        let catalog: Vec<String> = (0..9).map(|i| format!("step_{i}")).collect();
+        let mut editor = EditorState::from_preset(
+            catalog.clone(),
+            catalog,
+            "all-daily",
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        editor.set_steps_columns(3);
+        editor.section = Section::Steps;
+        editor.handle_key(crossterm::event::KeyCode::Down.into());
+        let lines = editor.body_lines();
+        let focused = lines
+            .iter()
+            .find(|line| line.iter().any(|span| span.content.contains("step_3")))
+            .expect("cursor row renders");
+        assert_eq!(
+            focused.style,
+            Style::new().bg(Color::DarkGray),
+            "the whole cursor row is highlighted (fzf --highlight-line pattern)"
+        );
+        let other = lines
+            .iter()
+            .find(|line| line.iter().any(|span| span.content.contains("step_0")))
+            .expect("first row renders");
+        assert_ne!(other.style, Style::new().bg(Color::DarkGray));
     }
 
     #[test]

@@ -767,6 +767,26 @@ fn skipped_outcomes_render_as_skipped_not_failed() {
 }
 
 #[test]
+fn picker_key_transitions_are_pure_decisions() {
+    let (mut app, _harness) = harness(&[]);
+    for (index, expect_stay) in [(0usize, false), (1, false), (2, false), (3, true)] {
+        let t = app.picker_key(index, key(KeyCode::Enter));
+        assert!(
+            matches!(t, Transition::Stay(view) if matches!(view, View::Editor(_))) == expect_stay,
+            "custom entry opens the editor, presets activate and leave"
+        );
+    }
+    assert!(matches!(
+        app.picker_key(0, key(KeyCode::Esc)),
+        Transition::Leave
+    ));
+    assert!(matches!(
+        app.picker_key(1, key(KeyCode::Down)),
+        Transition::Stay(View::PresetPicker { index: 2 })
+    ));
+}
+
+#[test]
 fn live_view_auto_returns_after_the_run_finishes() {
     let (mut app, harness) = harness(&[profile("all-daily")]);
     app.handle_key(key(KeyCode::Char('r')));

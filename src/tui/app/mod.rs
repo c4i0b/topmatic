@@ -58,6 +58,11 @@ pub struct App {
     pub tick: u64,
 }
 
+enum Transition {
+    Stay(View),
+    Leave,
+}
+
 pub struct ResolvedBins {
     topmatic_bin: PathBuf,
     topgrade_bin: Option<PathBuf>,
@@ -323,64 +328,90 @@ impl App {
                 View::Editor(_) => {}
             }
         }
-        match std::mem::replace(&mut self.view, View::Dashboard) {
-            View::Dashboard => self.handle_dashboard_key(key),
-            View::PresetPicker { index } => {
-                let count = presets::PRESETS.len() + 1;
-                match key.code {
-                    KeyCode::Char('j' | 'J') | KeyCode::Down => {
-                        self.view = View::PresetPicker {
-                            index: (index + 1).min(count - 1),
-                        };
-                    }
-                    KeyCode::Char('k' | 'K') | KeyCode::Up => {
-                        self.view = View::PresetPicker {
-                            index: index.saturating_sub(1),
-                        };
-                    }
-                    KeyCode::Esc => self.view = View::Dashboard,
-                    KeyCode::Enter => {
-                        if index < presets::PRESETS.len() {
-                            self.activate_preset(index);
-                        } else {
-                            let jitter = self.config.defaults.resolved().random_delay.as_secs();
-                            self.view = View::Editor(Box::new(editor::EditorState::new(
-                                None,
-                                self.catalog.clone(),
-                                jitter,
-                            )));
-                        }
-                    }
-                    _ => {}
-                }
+        let taken = std::mem::replace(&mut self.view, View::Dashboard);
+        self.view = match self.route(taken, key) {
+            Transition::Stay(view) => view,
+            Transition::Leave => View::Dashboard,
+        };
+    }
+
+    fn route(&mut self, view: View, key: KeyEvent) -> Transition {
+        match view {
+            View::Dashboard => {
+                self.handle_dashboard_key(key);
+                let next = std::mem::replace(&mut self.view, View::Dashboard);
+                Transition::Stay(next)
             }
-            View::Editor(mut state) => match state.handle_key(key) {
-                editor::EditorEvent::Cancel => {
-                    let discarded = cancel_message(state.is_dirty());
-                    if !discarded.is_empty() {
-                        self.log(ActivityKind::Action, discarded);
-                    }
-                }
-                editor::EditorEvent::RequestSave => self.save_profile(*state),
-                editor::EditorEvent::Quit => self.should_quit = true,
-                editor::EditorEvent::Help => {
-                    self.help = Some(views::help_overlay("editor help", views::editor_help()));
-                    self.view = View::Editor(state);
-                }
-                editor::EditorEvent::None => self.view = View::Editor(state),
-            },
-            View::Logs(mut state) => {
-                if state.follow && matches!(key.code, KeyCode::Char('x' | 'X')) {
-                    let profile = state.profile.clone();
-                    self.stop_run(&profile);
-                    return;
-                }
-                if state.handle_key(key) {
-                    self.rebuild_rows();
+            View::PresetPicker { index } => self.picker_key(index, key),
+            View::Editor(state) => self.editor_key(state, key),
+            View::Logs(state) => self.logs_key(state, key),
+        }
+    }
+
+    fn picker_key(&mut self, index: usize, key: KeyEvent) -> Transition {
+        let count = presets::PRESETS.len() + 1;
+        match key.code {
+            KeyCode::Char('j' | 'J') | KeyCode::Down => Transition::Stay(View::PresetPicker {
+                index: (index + 1).min(count - 1),
+            }),
+            KeyCode::Char('k' | 'K') | KeyCode::Up => Transition::Stay(View::PresetPicker {
+                index: index.saturating_sub(1),
+            }),
+            KeyCode::Esc => Transition::Leave,
+            KeyCode::Enter => {
+                if index < presets::PRESETS.len() {
+                    self.activate_preset(index);
+                    Transition::Leave
                 } else {
-                    self.view = View::Logs(state);
+                    let jitter = self.config.defaults.resolved().random_delay.as_secs();
+                    Transition::Stay(View::Editor(Box::new(editor::EditorState::new(
+                        None,
+                        self.catalog.clone(),
+                        jitter,
+                    ))))
                 }
             }
+            _ => Transition::Stay(View::PresetPicker { index }),
+        }
+    }
+
+    fn editor_key(&mut self, mut state: Box<editor::EditorState>, key: KeyEvent) -> Transition {
+        match state.handle_key(key) {
+            editor::EditorEvent::Cancel => {
+                let discarded = cancel_message(state.is_dirty());
+                if !discarded.is_empty() {
+                    self.log(ActivityKind::Action, discarded);
+                }
+                Transition::Leave
+            }
+            editor::EditorEvent::RequestSave => {
+                self.save_profile(*state);
+                let next = std::mem::replace(&mut self.view, View::Dashboard);
+                Transition::Stay(next)
+            }
+            editor::EditorEvent::Quit => {
+                self.should_quit = true;
+                Transition::Leave
+            }
+            editor::EditorEvent::Help => {
+                self.help = Some(views::help_overlay("editor help", views::editor_help()));
+                Transition::Stay(View::Editor(state))
+            }
+            editor::EditorEvent::None => Transition::Stay(View::Editor(state)),
+        }
+    }
+
+    fn logs_key(&mut self, mut state: logs::LogsState, key: KeyEvent) -> Transition {
+        if state.follow && matches!(key.code, KeyCode::Char('x' | 'X')) {
+            let profile = state.profile.clone();
+            self.stop_run(&profile);
+            return Transition::Leave;
+        }
+        if state.handle_key(key) {
+            self.rebuild_rows();
+            Transition::Leave
+        } else {
+            Transition::Stay(View::Logs(state))
         }
     }
 

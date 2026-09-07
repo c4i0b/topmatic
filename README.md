@@ -27,10 +27,29 @@ Topmatic turns Topgrade into scheduled jobs you manage from a TUI.
   plus derivatives like Mint and Zorin (Ubuntu family) and Bazzite (Fedora Atomic).
   systemd is the only scheduler supported today
 - [Topgrade](https://github.com/topgrade-rs/topgrade) in `PATH`
-- Rust toolchain (rustup is the easiest way).
+- Rust 1.85 or newer.
   Topmatic installs from source for now
 
 ## Install
+
+Topmatic installs from source and needs Rust 1.85 or newer.
+
+From the official repos where they ship a recent toolchain:
+
+```sh
+sudo dnf install rust cargo      # Fedora
+sudo pacman -S rust              # Arch
+sudo zypper install rust cargo   # openSUSE
+```
+
+Debian and Ubuntu carry Rust in their repos but usually too old for Topmatic.
+Use rustup there (or anywhere):
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then:
 
 ```sh
 cargo install --git https://github.com/c4i0b/topmatic

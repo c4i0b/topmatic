@@ -64,6 +64,10 @@ impl LogsState {
         self.viewport.get().max(1).saturating_sub(1) as u16
     }
 
+    fn scroll_max(&self) -> u16 {
+        self.content_lines.saturating_sub(self.viewport.get()) as u16
+    }
+
     pub fn reload(&mut self, paths: &Paths) {
         self.entries = list_runs(paths, &self.profile);
         self.selected = 0;
@@ -102,7 +106,7 @@ impl LogsState {
                     false
                 }
                 KeyCode::Home => {
-                    self.follow_offset = self.content_lines.saturating_sub(1) as u16;
+                    self.follow_offset = self.scroll_max();
                     false
                 }
                 KeyCode::End => {
@@ -125,7 +129,7 @@ impl LogsState {
             }
             KeyCode::Down | KeyCode::Char('j' | 'J') => {
                 if self.content.is_some() {
-                    self.scroll = self.scroll.saturating_add(1);
+                    self.scroll = (self.scroll + 1).min(self.scroll_max());
                 } else if self.selected + 1 < self.entries.len() {
                     self.selected += 1;
                     self.load_selected();
@@ -141,8 +145,10 @@ impl LogsState {
             }
             KeyCode::PageDown => {
                 if self.content.is_some() {
-                    let max = self.content_lines.saturating_sub(1) as u16;
-                    self.scroll = self.scroll.saturating_add(page as u16).min(max);
+                    self.scroll = self
+                        .scroll
+                        .saturating_add(page as u16)
+                        .min(self.scroll_max());
                 } else if self.selected + 1 < self.entries.len() {
                     self.selected = (self.selected + page).min(self.entries.len() - 1);
                     self.load_selected();
@@ -158,7 +164,7 @@ impl LogsState {
             }
             KeyCode::End => {
                 if self.content.is_some() {
-                    self.scroll = self.content_lines.saturating_sub(1) as u16;
+                    self.scroll = self.scroll_max();
                 } else if !self.entries.is_empty() {
                     self.selected = self.entries.len() - 1;
                     self.load_selected();
@@ -413,7 +419,10 @@ mod tests {
         assert_eq!(state.follow_offset, 0, "page down re-pins at the bottom");
 
         assert!(!state.handle_key(key(KeyCode::Home)));
-        assert_eq!(state.follow_offset, 99, "home jumps to the very top");
+        assert_eq!(
+            state.follow_offset, 89,
+            "home jumps to the very top without overshoot (100 lines, 11 visible)"
+        );
         assert!(!state.handle_key(key(KeyCode::End)));
         assert_eq!(state.follow_offset, 0, "end returns to the pinned bottom");
     }
@@ -436,13 +445,39 @@ mod tests {
         state.viewport.set(11);
 
         state.handle_key(key(KeyCode::End));
-        assert_eq!(state.scroll, 49, "end jumps to the last line");
+        assert_eq!(
+            state.scroll, 39,
+            "end stops with the last line at the bottom (50 lines, 11 visible)"
+        );
         state.handle_key(key(KeyCode::Home));
         assert_eq!(state.scroll, 0);
         state.handle_key(key(KeyCode::PageDown));
         assert_eq!(state.scroll, 10);
         state.handle_key(key(KeyCode::PageUp));
         assert_eq!(state.scroll, 0);
+        for _ in 0..60 {
+            state.handle_key(key(KeyCode::Down));
+        }
+        assert_eq!(
+            state.scroll, 39,
+            "line scrolling also stops at the last-line-at-bottom limit"
+        );
+    }
+
+    #[test]
+    fn short_content_never_scrolls() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let dir = paths.logs_dir("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("20260101-010101.log"), "one\ntwo\n").unwrap();
+        let mut state = LogsState::open(&paths, "alpha");
+        state.viewport.set(20);
+        state.handle_key(key(KeyCode::End));
+        assert_eq!(
+            state.scroll, 0,
+            "content shorter than the viewport never scrolls"
+        );
     }
 
     #[test]

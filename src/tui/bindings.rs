@@ -72,7 +72,7 @@ pub const DASHBOARD: &[Binding] = &[
     Binding {
         key: "e",
         verb: "edit",
-        help_key: "return / e",
+        help_key: "enter / e",
         desc: "edit the selected profile",
         group: PROFILES,
         footer: true,
@@ -148,15 +148,24 @@ pub const EDITOR: &[Binding] = &[
         key: "↑↓←→",
         verb: "move",
         help_key: "↑↓←→ or hjkl",
-        desc: "move in the current section",
+        desc: "move in the steps grid",
         group: MOVE_AND_EDIT,
         footer: true,
-        scope: Scope::All,
+        scope: Scope::StepsOnly,
     },
     Binding {
-        key: "space/return",
+        key: "↑↓",
+        verb: "move",
+        help_key: "↑/↓ or j/k",
+        desc: "move in the schedule and options rows",
+        group: MOVE_AND_EDIT,
+        footer: true,
+        scope: Scope::RowsOnly,
+    },
+    Binding {
+        key: "space/enter",
         verb: "toggle",
-        help_key: "space / return",
+        help_key: "space / enter",
         desc: "toggle steps · choose the highlighted row",
         group: MOVE_AND_EDIT,
         footer: true,
@@ -181,7 +190,7 @@ pub const EDITOR: &[Binding] = &[
         scope: Scope::StepsOnly,
     },
     Binding {
-        key: "return",
+        key: "enter",
         verb: "choose",
         help_key: "",
         desc: "",
@@ -234,13 +243,22 @@ pub const EDITOR: &[Binding] = &[
         footer: true,
         scope: Scope::All,
     },
+    Binding {
+        key: "?",
+        verb: "help",
+        help_key: "?",
+        desc: "show this help",
+        group: SAVE_AND_LEAVE,
+        footer: false,
+        scope: Scope::All,
+    },
 ];
 
 pub const PRESET_PICKER: &[Binding] = &[
     Binding {
-        key: "return",
+        key: "enter",
         verb: "choose",
-        help_key: "return",
+        help_key: "enter",
         desc: "start this preset",
         group: MOVE_AND_EDIT,
         footer: true,
@@ -279,7 +297,7 @@ pub const LOGS_FOLLOW: &[Binding] = &[
     Binding {
         key: "↑↓",
         verb: "scroll",
-        help_key: "↑↓ / pgup/pgdn",
+        help_key: "↑↓ / pgup/pgdn / home/end",
         desc: "scroll the live log (auto-follows at the bottom)",
         group: MOVE_AND_EDIT,
         footer: true,
@@ -316,9 +334,9 @@ pub const LOGS_BROWSE: &[Binding] = &[
         scope: Scope::All,
     },
     Binding {
-        key: "return",
+        key: "enter",
         verb: "open",
-        help_key: "return",
+        help_key: "enter",
         desc: "open the highlighted run",
         group: PROFILES,
         footer: false,
@@ -327,8 +345,8 @@ pub const LOGS_BROWSE: &[Binding] = &[
     Binding {
         key: "esc/l",
         verb: "back",
-        help_key: "esc / l / return / h",
-        desc: "back to the dashboard; return closes an open run",
+        help_key: "esc / l / enter / h",
+        desc: "back to the dashboard; enter closes an open run",
         group: GLOBAL,
         footer: true,
         scope: Scope::All,
@@ -434,15 +452,15 @@ mod tests {
         );
         assert_eq!(
             footer_tokens(EDITOR, true),
-            "↑↓←→ move  space/return toggle  ctrl+a all  ctrl+d none  / filter  tab section  ctrl+s save  esc back  q quit"
+            "↑↓←→ move  space/enter toggle  ctrl+a all  ctrl+d none  / filter  tab section  ctrl+s save  esc back  q quit"
         );
         assert_eq!(
             footer_tokens(EDITOR, false),
-            "↑↓←→ move  return choose  tab section  ctrl+s save  esc back  q quit"
+            "↑↓ move  enter choose  tab section  ctrl+s save  esc back  q quit"
         );
         assert_eq!(
             footer_tokens(PRESET_PICKER, false),
-            "return choose  esc/l back  q quit"
+            "enter choose  esc/l back  q quit"
         );
         assert_eq!(
             footer_tokens(LOGS_FOLLOW, false),
@@ -473,14 +491,14 @@ mod tests {
             11,
             "3 tokens as key/space/verb with two-space gaps"
         );
-        assert_eq!(spans[0].content, "return");
+        assert_eq!(spans[0].content, "enter");
         assert_eq!(spans[0].style, KEY_STYLE);
         assert_eq!(spans[2].content, "choose");
         assert_eq!(spans[2].style, VERB_STYLE);
         assert_eq!(spans[3].content, "  ");
         assert_eq!(spans[7].content, "  ");
         let text: String = spans.iter().map(|s| s.content.clone()).collect();
-        assert_eq!(text, "return choose  esc/l back  q quit");
+        assert_eq!(text, "enter choose  esc/l back  q quit");
     }
 
     #[test]

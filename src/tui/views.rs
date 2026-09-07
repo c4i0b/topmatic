@@ -670,7 +670,7 @@ mod tests {
         );
         rows_state.section = editor::Section::Options;
         assert!(
-            footer_hints(&View::Editor(Box::new(rows_state)), false).contains("return choose"),
+            footer_hints(&View::Editor(Box::new(rows_state)), false).contains("enter choose"),
             "rows sections choose"
         );
         let mut steps_state = EditorState::new(
@@ -681,7 +681,7 @@ mod tests {
         steps_state.section = editor::Section::Steps;
         let steps_hint = footer_hints(&View::Editor(Box::new(steps_state)), false);
         assert!(
-            steps_hint.contains("space/return toggle") && steps_hint.contains("ctrl+a all"),
+            steps_hint.contains("space/enter toggle") && steps_hint.contains("ctrl+a all"),
             "steps focus toggles and shows the bulk keys: {steps_hint}"
         );
         assert!(

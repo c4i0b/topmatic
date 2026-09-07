@@ -45,11 +45,17 @@ fn status_span(status: &Option<RunOutcome>) -> Span<'static> {
             Style::new().fg(Color::Yellow),
         ),
         Some(outcome) if outcome.success => Span::styled(
-            outcome.finished_at.format("ok %d %b %H:%M").to_string(),
+            format!(
+                "ok {}",
+                crate::util::format_in(outcome.finished_at, &chrono::Local, "%d %b %H:%M")
+            ),
             Style::new().fg(Color::Green),
         ),
         Some(outcome) => Span::styled(
-            outcome.finished_at.format("FAILED %d %b %H:%M").to_string(),
+            format!(
+                "FAILED {}",
+                crate::util::format_in(outcome.finished_at, &chrono::Local, "%d %b %H:%M")
+            ),
             Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
     }

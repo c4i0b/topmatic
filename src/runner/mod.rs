@@ -63,9 +63,10 @@ pub fn run_scheduled(
     topgrade_config::write_if_changed(&paths.topgrade_config_file())?;
 
     let started = Utc::now();
-    let log_path = paths
-        .logs_dir(&profile.name)
-        .join(format!("{}.log", started.format("%Y%m%d-%H%M%S%.3f")));
+    let log_path = paths.logs_dir(&profile.name).join(format!(
+        "{}.log",
+        crate::util::format_in(started, &chrono::Local, "%Y%m%d-%H%M%S%.3f")
+    ));
 
     let lock_file = OpenOptions::new()
         .create(true)
@@ -135,7 +136,7 @@ fn run_with_policy(
             let attempt_started = Utc::now();
             let log_path = logs_dir.join(format!(
                 "{}.log",
-                attempt_started.format("%Y%m%d-%H%M%S%.3f")
+                crate::util::format_in(attempt_started, &chrono::Local, "%Y%m%d-%H%M%S%.3f")
             ));
             let outcome = execute(
                 profile,
@@ -269,10 +270,13 @@ impl RunOutcome {
     pub fn last_run_summary(&self) -> String {
         if self.skipped {
             "skipped".to_string()
-        } else if self.success {
-            self.finished_at.format("ok %d %b %H:%M").to_string()
         } else {
-            self.finished_at.format("FAILED %d %b %H:%M").to_string()
+            let when = crate::util::format_in(self.finished_at, &chrono::Local, "%d %b %H:%M");
+            if self.success {
+                format!("ok {when}")
+            } else {
+                format!("FAILED {when}")
+            }
         }
     }
 }
@@ -354,10 +358,36 @@ mod tests {
     #[test]
     fn last_run_summary_matches_the_cli_columns() {
         assert_eq!(outcome(true, false).last_run_summary(), "skipped");
-        assert_eq!(outcome(false, true).last_run_summary(), "ok 06 Sep 08:30");
+        let ok = outcome(false, true);
         assert_eq!(
-            outcome(false, false).last_run_summary(),
-            "FAILED 06 Sep 08:30"
+            ok.last_run_summary(),
+            format!(
+                "ok {}",
+                crate::util::format_in(ok.finished_at, &chrono::Local, "%d %b %H:%M")
+            )
+        );
+        let failed = outcome(false, false);
+        assert_eq!(
+            failed.last_run_summary(),
+            format!(
+                "FAILED {}",
+                crate::util::format_in(failed.finished_at, &chrono::Local, "%d %b %H:%M")
+            )
+        );
+    }
+
+    #[test]
+    fn displayed_times_render_in_the_machine_zone() {
+        let utc = Utc.with_ymd_and_hms(2026, 9, 6, 8, 30, 0).unwrap();
+        let minus3 = chrono::FixedOffset::east_opt(-3 * 3600).unwrap();
+        assert_eq!(
+            crate::util::format_in(utc, &minus3, "%d %b %H:%M"),
+            "06 Sep 05:30",
+            "a UTC-3 machine shows 08:30Z as 05:30"
+        );
+        assert_eq!(
+            crate::util::format_in(utc, &Utc, "%d %b %H:%M"),
+            "06 Sep 08:30"
         );
     }
 

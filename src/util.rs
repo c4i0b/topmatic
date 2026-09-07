@@ -1,6 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, TimeZone, Utc};
+
+pub fn format_in<Tz>(moment: DateTime<Utc>, zone: &Tz, layout: &str) -> String
+where
+    Tz: TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    moment.with_timezone(zone).format(layout).to_string()
+}
+
 pub fn write_file_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
     if let Ok(existing) = fs::read_to_string(path)
         && existing == content
@@ -17,7 +27,7 @@ pub fn write_file_if_changed(path: &Path, content: &str) -> std::io::Result<bool
 }
 
 pub fn unique_sibling(path: &Path, suffix: &str) -> PathBuf {
-    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S%.3f");
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f");
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     let mut candidate = path.with_file_name(format!("{file_name}.{suffix}-{timestamp}"));
     let mut counter = 0u32;

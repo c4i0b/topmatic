@@ -61,6 +61,10 @@ cargo install topmatic
 Run `topmatic` once.
 It installs the user units and converges the timers.
 
+Topmatic refuses to run as root.
+It manages your user's systemd session, so sudo would act on root's units instead.
+Run it as your regular user.
+
 To let timers fire while logged out enable lingering yourself:
 `loginctl enable-linger`.
 Topmatic never runs anything privileged.

@@ -8,8 +8,7 @@ use crate::domain::schedule::SchedulePreset;
 use crate::paths::Paths;
 use crate::runner::retry::RetryPolicy;
 
-const HEADER: &str =
-    "# topmatic configuration.\n\n";
+const HEADER: &str = "# topmatic configuration.\n\n";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {

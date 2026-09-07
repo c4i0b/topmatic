@@ -31,6 +31,7 @@ enum ScheduleRow {
 
 pub struct EditorState {
     pub creating: bool,
+    pub base: Option<String>,
     pub original: Option<Profile>,
     pub original_name: Option<String>,
     pub suggested_name: Option<String>,
@@ -69,8 +70,33 @@ impl EditorState {
                 schedule.preset = schedule.preset.clone().normalized();
                 let mut original = profile.clone();
                 original.schedule = schedule.clone();
+                let base = profile.base.clone();
+                let resolved: BTreeSet<String> = {
+                    use std::collections::BTreeSet as Set;
+                    match crate::domain::overlay::resolved_steps(
+                        profile,
+                        catalog
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    ) {
+                        crate::domain::overlay::ResolvedSteps::Everything { excluded } => {
+                            let ex: Set<String> = excluded.into_iter().collect();
+                            catalog
+                                .iter()
+                                .filter(|step| !ex.contains(step.as_str()))
+                                .cloned()
+                                .collect()
+                        }
+                        crate::domain::overlay::ResolvedSteps::Explicit(steps) => {
+                            steps.into_iter().collect()
+                        }
+                    }
+                };
                 Self {
                     creating: false,
+                    base,
                     original: Some(original),
                     original_name: Some(profile.name.clone()),
                     suggested_name: None,
@@ -81,7 +107,7 @@ impl EditorState {
                     steps_filter: FilterState::new(),
                     steps_columns: 1,
                     catalog,
-                    selected_steps: profile.steps.iter().cloned().collect(),
+                    selected_steps: resolved,
                     schedule: schedule.clone(),
                     notify: profile.notify,
                     section: Section::Steps,
@@ -97,6 +123,7 @@ impl EditorState {
             }
             None => Self {
                 creating: true,
+                base: None,
                 original: None,
                 original_name: None,
                 suggested_name: None,
@@ -194,6 +221,27 @@ impl EditorState {
     }
 
     pub fn to_profile(&self, name: &str) -> Result<Profile, String> {
+        if let Some(base) = self.base.as_deref() {
+            let name = self
+                .original_name
+                .clone()
+                .unwrap_or_else(|| name.to_string());
+            let delta =
+                crate::domain::overlay::step_delta(Some(base), &self.selected_steps, &self.catalog);
+            return Ok(Profile {
+                name,
+                base: Some(base.to_string()),
+                extra_steps: delta.extra_steps,
+                excluded_steps: delta.excluded_steps,
+                steps: Vec::new(),
+                schedule: Schedule {
+                    preset: self.schedule.preset.clone(),
+                    randomized_delay_sec: self.schedule.randomized_delay_sec,
+                },
+                notify: self.notify,
+                scope: Scope::User,
+            });
+        }
         let name = sanitize_name(name).map_err(|error| error.to_string())?;
         if self.selected_steps.is_empty() {
             return Err("select at least one step".to_string());
@@ -221,6 +269,9 @@ impl EditorState {
         {
             if self.name_popup.is_some() {
                 return self.handle_popup_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            }
+            if self.base.is_some() {
+                return EditorEvent::RequestSave;
             }
             self.open_name_popup();
             return EditorEvent::None;
@@ -966,6 +1017,71 @@ mod tests {
             editor.handle_key(key(KeyCode::Enter)),
             EditorEvent::Cancel,
             "Discard leaves like the old cancel"
+        );
+    }
+
+    #[test]
+    fn overlay_edit_saves_the_delta_without_the_name_popup() {
+        let mut profile = editing_editor().original.clone().unwrap();
+        profile.base = Some("dev-tools".to_string());
+        profile.steps = Vec::new();
+        profile.extra_steps = vec!["flatpak".to_string()];
+        let mut editor =
+            EditorState::new(Some(&profile), catalog_entries(), DEFAULT_RANDOM_DELAY_SEC);
+
+        let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert!(editor.name_popup.is_none());
+        assert_eq!(
+            editor.handle_key(ctrl_s),
+            EditorEvent::RequestSave,
+            "ctrl+s on a preset-based profile saves directly — no popup"
+        );
+        let saved = editor.to_profile("").unwrap();
+        assert_eq!(saved.base.as_deref(), Some("dev-tools"));
+        assert_eq!(
+            saved.extra_steps,
+            vec!["flatpak".to_string()],
+            "the untouched selection round-trips as the same delta"
+        );
+        assert!(saved.excluded_steps.is_empty());
+    }
+
+    #[test]
+    fn overlay_exclusion_round_trip_removes_the_field_when_reverted() {
+        let mut profile = editing_editor().original.clone().unwrap();
+        profile.base = Some("all".to_string());
+        profile.steps = Vec::new();
+        profile.excluded_steps = vec!["flatpak".to_string()];
+        let mut editor =
+            EditorState::new(Some(&profile), catalog_entries(), DEFAULT_RANDOM_DELAY_SEC);
+        assert!(
+            !editor.selected_steps.contains("flatpak"),
+            "the excluded step starts unchecked"
+        );
+
+        editor.steps_filter.edit = LineEdit::new("flatpak");
+        editor.handle_key(key(KeyCode::Char(' ')));
+        assert!(
+            editor.selected_steps.contains("flatpak"),
+            "toggling re-includes it"
+        );
+        let saved = editor.to_profile("").unwrap();
+        assert!(
+            saved.excluded_steps.is_empty(),
+            "re-including removes the exclusion — the field omits from the config"
+        );
+    }
+
+    #[test]
+    fn everything_base_editor_starts_with_the_whole_catalog_checked() {
+        let mut profile = editing_editor().original.clone().unwrap();
+        profile.base = Some("all".to_string());
+        profile.steps = Vec::new();
+        let editor = EditorState::new(Some(&profile), catalog_entries(), DEFAULT_RANDOM_DELAY_SEC);
+        assert_eq!(
+            editor.selected_steps.len(),
+            editor.catalog.len(),
+            "everything base resolves to the full catalog minus exclusions"
         );
     }
 

@@ -38,21 +38,56 @@ impl NotifyPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Profile {
     pub name: String,
+    #[serde(default)]
     pub steps: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub base: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub extra_steps: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub excluded_steps: Vec<String>,
+    #[serde(default)]
     pub schedule: Schedule,
     #[serde(default)]
     pub notify: NotifyPolicy,
     #[serde(default)]
     pub scope: Scope,
+}
+
+impl Serialize for Profile {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let overlay = self.base.is_some();
+        let mut state = serializer.serialize_struct("Profile", 8)?;
+        state.serialize_field("name", &self.name)?;
+        if !self.steps.is_empty() {
+            state.serialize_field("steps", &self.steps)?;
+        }
+        if let Some(base) = &self.base {
+            state.serialize_field("base", base)?;
+        }
+        if !self.extra_steps.is_empty() {
+            state.serialize_field("extra_steps", &self.extra_steps)?;
+        }
+        if !self.excluded_steps.is_empty() {
+            state.serialize_field("excluded_steps", &self.excluded_steps)?;
+        }
+        let schedule_is_default = self.schedule == Schedule::default();
+        if !overlay || !schedule_is_default {
+            state.serialize_field("schedule", &self.schedule)?;
+        }
+        if !overlay || self.notify != NotifyPolicy::default() {
+            state.serialize_field("notify", &self.notify)?;
+        }
+        state.serialize_field("scope", &self.scope)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]

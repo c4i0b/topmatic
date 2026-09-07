@@ -425,7 +425,7 @@ pub(crate) fn editor_help() -> Vec<Line<'static>> {
         keys: &[
             ("preset", "frequency (bi-weekly renders as two lines)"),
             ("notify", "always / on failure / never"),
-            ("steps", "pick what runs; a * marks unsaved changes"),
+            ("steps", "what runs — uninstalled steps skip automatically"),
         ],
     });
     let groups = &owned[..];

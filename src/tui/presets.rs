@@ -7,17 +7,17 @@ pub struct Preset {
 pub const PRESETS: &[Preset] = &[
     Preset {
         label: "All",
-        description: "every supported step",
+        description: "everything installed; missing steps just skip (recommended)",
         suggested_name: "all-daily",
     },
     Preset {
         label: "Dev tools",
-        description: "runtimes, editors and tooling",
+        description: "runtimes, editors and tooling only",
         suggested_name: "dev-daily",
     },
     Preset {
         label: "Flatpak",
-        description: "apps and runtimes",
+        description: "apps and runtimes only",
         suggested_name: "flatpak-daily",
     },
 ];

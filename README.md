@@ -23,8 +23,8 @@ Topmatic turns Topgrade into scheduled jobs you manage from a TUI.
 ## Requirements
 
 - Linux with **systemd** (user session).
-  Works out of the box on Fedora, Ubuntu, Debian, Arch, openSUSE and Mint,
-  or any distribution derived from them.
+  Works out of the box on Fedora, Ubuntu, Debian, Arch and openSUSE,
+  plus derivatives like Mint and Zorin (Ubuntu family) and Bazzite (Fedora Atomic).
   systemd is the only scheduler supported today
 - [Topgrade](https://github.com/topgrade-rs/topgrade) in `PATH`
 - Rust toolchain to install from source

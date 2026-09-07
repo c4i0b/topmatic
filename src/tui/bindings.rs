@@ -357,6 +357,28 @@ mod tests {
     }
 
     #[test]
+    fn readme_documents_every_footer_action() {
+        let readme = include_str!("../../README.md");
+        for table in [DASHBOARD, EDITOR, PRESET_PICKER, LOGS_FOLLOW, LOGS_BROWSE] {
+            for binding in table.iter().filter(|b| b.footer) {
+                assert!(
+                    readme.contains(binding.key),
+                    "README misses the {:?} key of a footer action",
+                    binding.key
+                );
+                if !binding.verb.is_empty() {
+                    assert!(
+                        readme.contains(binding.verb),
+                        "README misses the {:?} verb of the {} action",
+                        binding.verb,
+                        binding.key
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn help_groups_keep_first_appearance_order_without_duplicates() {
         let groups = help_groups(EDITOR);
         assert_eq!(groups.first().map(|(title, _)| *title), Some(MOVE_AND_EDIT));

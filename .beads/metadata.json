@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "topmatic",
+  "project_id": "ed187b3b-1fa9-47bb-a5d9-495f465ee5fc"
+}

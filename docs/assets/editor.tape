@@ -14,11 +14,5 @@ Type "jjj"
 Sleep 500ms
 Enter
 Sleep 1s
-Type "/car"
-Sleep 800ms
-Backspace
-Backspace
-Backspace
-Sleep 500ms
 Type " "
 Sleep 800ms

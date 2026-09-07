@@ -402,11 +402,6 @@ impl App {
     }
 
     fn logs_key(&mut self, mut state: logs::LogsState, key: KeyEvent) -> Transition {
-        if state.follow && matches!(key.code, KeyCode::Char('x' | 'X')) {
-            let profile = state.profile.clone();
-            self.stop_run(&profile);
-            return Transition::Leave;
-        }
         if state.handle_key(key) {
             self.rebuild_rows();
             Transition::Leave

@@ -689,9 +689,11 @@ mod tests {
             "the editor hint no longer advertises '/ filter'"
         );
         assert!(footer_hints(&View::Dashboard, false).contains("q quit"));
+        let follow = footer_hints(&View::Logs(crate::tui::logs::LogsState::follow("x")), false);
+        assert!(follow.contains("esc/l back"));
         assert!(
-            footer_hints(&View::Logs(crate::tui::logs::LogsState::follow("x")), false)
-                .contains("x stop")
+            !follow.contains("x stop"),
+            "the stopped-run feature was removed: {follow}"
         );
         assert!(footer_hints(&View::Dashboard, true).starts_with("filter"));
     }

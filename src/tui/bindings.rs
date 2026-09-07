@@ -286,15 +286,6 @@ pub const PRESET_PICKER: &[Binding] = &[
 
 pub const LOGS_FOLLOW: &[Binding] = &[
     Binding {
-        key: "x",
-        verb: "stop",
-        help_key: "x",
-        desc: "stop the running profile",
-        group: PROFILES,
-        footer: true,
-        scope: Scope::All,
-    },
-    Binding {
         key: "↑↓",
         verb: "scroll",
         help_key: "↑↓ / pgup/pgdn / home/end",
@@ -464,7 +455,7 @@ mod tests {
         );
         assert_eq!(
             footer_tokens(LOGS_FOLLOW, false),
-            "x stop  ↑↓ scroll  esc/l back  q quit"
+            "↑↓ scroll  esc/l back  q quit"
         );
         assert_eq!(
             footer_tokens(LOGS_BROWSE, false),

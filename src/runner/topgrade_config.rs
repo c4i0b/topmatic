@@ -15,7 +15,7 @@ pub fn render(ignore: &[String]) -> String {
             .map(|step| format!("\"{step}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        lines.push(format!("ignore = [{list}]"));
+        lines.push(format!("disable = [{list}]"));
     }
     lines.join("\n") + "\n"
 }
@@ -55,19 +55,19 @@ mod tests {
     }
 
     #[test]
-    fn exclusions_land_in_the_ignore_list() {
+    fn exclusions_land_in_the_disable_list() {
         let parsed: toml::Value =
             toml::from_str(&render(&["brew".to_string(), "wsl".to_string()])).unwrap();
         assert_eq!(
-            parsed.get("ignore").and_then(|v| v.as_array()),
+            parsed.get("disable").and_then(|v| v.as_array()),
             Some(&vec![
                 toml::Value::String("brew".to_string()),
                 toml::Value::String("wsl".to_string())
             ])
         );
         assert!(
-            !render(&[]).contains("ignore"),
-            "no exclusions, no ignore key"
+            !render(&[]).contains("disable"),
+            "no exclusions, no disable key"
         );
     }
 

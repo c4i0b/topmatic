@@ -65,7 +65,9 @@ pub fn run_scheduled(
         &crate::domain::presets::fallback_catalog(),
     );
     let ignore: Vec<String> = match &resolved {
-        crate::domain::overlay::ResolvedSteps::Everything { excluded } => excluded.clone(),
+        crate::domain::overlay::ResolvedSteps::Everything { .. } => {
+            crate::domain::overlay::everything_ignore(profile)
+        }
         _ => Vec::new(),
     };
     topgrade_config::write_if_changed(&paths.topgrade_config_file(), &ignore)?;

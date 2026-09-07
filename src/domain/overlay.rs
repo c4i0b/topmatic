@@ -59,6 +59,16 @@ pub fn resolved_steps(profile: &Profile, catalog: &[String]) -> ResolvedSteps {
     }
 }
 
+pub fn everything_ignore(profile: &Profile) -> Vec<String> {
+    let mut ignored: BTreeSet<String> = profile.excluded_steps.iter().cloned().collect();
+    ignored.extend(
+        super::steps::PRIVILEGED_STEPS
+            .iter()
+            .map(|step| step.to_string()),
+    );
+    ignored.into_iter().collect()
+}
+
 pub fn resolved_schedule(profile: &Profile) -> Schedule {
     profile.schedule.clone()
 }
@@ -238,6 +248,28 @@ mod tests {
             !text.contains("base"),
             "baseless profiles omit the base key"
         );
+    }
+
+    #[test]
+    fn everything_mode_auto_ignores_privileged_steps() {
+        let mut p = profile("all-daily", Some("all"), &[]);
+        p.excluded_steps = vec!["system".to_string()];
+        let ignored = everything_ignore(&p);
+        assert!(
+            ignored.contains(&"system".to_string()),
+            "user exclusions survive"
+        );
+        assert!(
+            super::super::steps::PRIVILEGED_STEPS
+                .iter()
+                .all(|step| ignored.contains(&step.to_string())),
+            "the whole privileged list lands in the ignore set — no-sudo premise holds"
+        );
+        assert_eq!(ignored, {
+            let mut sorted = ignored.clone();
+            sorted.sort();
+            sorted
+        });
     }
 
     #[test]

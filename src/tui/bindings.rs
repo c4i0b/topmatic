@@ -14,6 +14,14 @@ const GLOBAL: &str = "Global";
 
 pub const DASHBOARD: &[Binding] = &[
     Binding {
+        key: "↑↓",
+        verb: "move",
+        help_key: "↑/↓ or j/k",
+        desc: "move selection",
+        group: PROFILES,
+        footer: true,
+    },
+    Binding {
         key: "n",
         verb: "new",
         help_key: "n",
@@ -54,14 +62,6 @@ pub const DASHBOARD: &[Binding] = &[
         footer: true,
     },
     Binding {
-        key: "↑/↓",
-        verb: "",
-        help_key: "↑/↓ or j/k",
-        desc: "move selection",
-        group: PROFILES,
-        footer: false,
-    },
-    Binding {
         key: "/",
         verb: "filter",
         help_key: "/",
@@ -75,7 +75,7 @@ pub const DASHBOARD: &[Binding] = &[
         help_key: "L",
         desc: "toggle the activity panel",
         group: PROFILES,
-        footer: true,
+        footer: false,
     },
     Binding {
         key: "?",
@@ -251,11 +251,52 @@ pub const LOGS_BROWSE: &[Binding] = &[
     },
 ];
 
+pub const FILTER_TYPING: &[Binding] = &[
+    Binding {
+        key: "type…",
+        verb: "",
+        help_key: "",
+        desc: "",
+        group: "",
+        footer: true,
+    },
+    Binding {
+        key: "Enter",
+        verb: "accept",
+        help_key: "",
+        desc: "",
+        group: "",
+        footer: true,
+    },
+    Binding {
+        key: "Esc",
+        verb: "clear",
+        help_key: "",
+        desc: "",
+        group: "",
+        footer: true,
+    },
+    Binding {
+        key: "↑↓",
+        verb: "move",
+        help_key: "",
+        desc: "",
+        group: "",
+        footer: true,
+    },
+];
+
 pub fn footer_tokens(table: &[Binding]) -> String {
     table
         .iter()
         .filter(|b| b.footer)
-        .map(|b| format!("{} {}", b.key, b.verb))
+        .map(|b| {
+            if b.verb.is_empty() {
+                b.key.to_string()
+            } else {
+                format!("{} {}", b.key, b.verb)
+            }
+        })
         .collect::<Vec<_>>()
         .join("  ")
 }
@@ -284,7 +325,7 @@ mod tests {
     fn footer_lines_match_the_documented_legends() {
         assert_eq!(
             footer_tokens(DASHBOARD),
-            "n new  e edit  d delete  r run now  l logs  / filter  L activity  ? help  q quit"
+            "↑↓ move  n new  e edit  d delete  r run now  l logs  / filter  ? help  q quit"
         );
         assert_eq!(
             footer_tokens(EDITOR),
@@ -302,6 +343,17 @@ mod tests {
             footer_tokens(LOGS_BROWSE),
             "enter open  r refresh  esc back  q quit"
         );
+    }
+
+    #[test]
+    fn footer_legends_fit_eighty_columns() {
+        for table in [DASHBOARD, EDITOR, PRESET_PICKER, LOGS_FOLLOW, LOGS_BROWSE] {
+            let legend = footer_tokens(table);
+            assert!(
+                legend.chars().count() <= 80,
+                "legend overflows the common terminal width: {legend}"
+            );
+        }
     }
 
     #[test]

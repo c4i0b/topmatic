@@ -253,7 +253,10 @@ pub(crate) fn name_popup_hint(value: &str) -> String {
 
 pub(crate) fn footer_hints(view: &View, filter_active: bool) -> String {
     if filter_active {
-        return "filter: type…  Enter accept  Esc clear  ↑↓ move".to_string();
+        return format!(
+            "filter: {}",
+            bindings::footer_tokens(bindings::FILTER_TYPING)
+        );
     }
     let table = match view {
         View::Dashboard => bindings::DASHBOARD,

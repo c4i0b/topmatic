@@ -312,7 +312,7 @@ pub const LOGS_BROWSE: &[Binding] = &[
         help_key: "enter",
         desc: "open the highlighted run",
         group: PROFILES,
-        footer: true,
+        footer: false,
         scope: Scope::All,
     },
     Binding {
@@ -450,7 +450,7 @@ mod tests {
         );
         assert_eq!(
             footer_tokens(LOGS_BROWSE, false),
-            "enter open  r refresh  esc back  q quit"
+            "r refresh  esc back  q quit"
         );
     }
 

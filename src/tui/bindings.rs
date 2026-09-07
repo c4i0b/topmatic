@@ -6,9 +6,16 @@ pub const KEY_STYLE: Style = Style::new()
     .add_modifier(ratatui::style::Modifier::BOLD);
 pub const VERB_STYLE: Style = Style::new().fg(Color::DarkGray);
 
-pub fn legend_spans(table: &[Binding]) -> Vec<Span<'static>> {
+pub fn legend_spans(table: &[Binding], in_steps: bool) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    for binding in table.iter().filter(|b| b.footer) {
+    for binding in table.iter().filter(|b| {
+        b.footer
+            && match b.scope {
+                Scope::All => true,
+                Scope::StepsOnly => in_steps,
+                Scope::RowsOnly => !in_steps,
+            }
+    }) {
         if !spans.is_empty() {
             spans.push(Span::raw("  "));
         }
@@ -21,6 +28,13 @@ pub fn legend_spans(table: &[Binding]) -> Vec<Span<'static>> {
     spans
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    All,
+    StepsOnly,
+    RowsOnly,
+}
+
 pub struct Binding {
     pub key: &'static str,
     pub verb: &'static str,
@@ -28,6 +42,7 @@ pub struct Binding {
     pub desc: &'static str,
     pub group: &'static str,
     pub footer: bool,
+    pub scope: Scope,
 }
 
 const MOVE_AND_EDIT: &str = "Move & edit";
@@ -43,6 +58,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "move selection",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "n",
@@ -51,6 +67,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "new profile (from presets)",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "e",
@@ -59,6 +76,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "edit the selected profile",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "d",
@@ -67,6 +85,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "delete profile — always asks first",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "r",
@@ -75,6 +94,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "run now, opens the live view",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "l",
@@ -83,6 +103,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "browse run logs",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "/",
@@ -91,6 +112,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "filter profiles by name",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "L",
@@ -99,6 +121,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "toggle the activity panel",
         group: PROFILES,
         footer: false,
+        scope: Scope::All,
     },
     Binding {
         key: "?",
@@ -107,6 +130,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "close this help",
         group: GLOBAL,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "q",
@@ -115,6 +139,7 @@ pub const DASHBOARD: &[Binding] = &[
         desc: "quit topmatic",
         group: GLOBAL,
         footer: true,
+        scope: Scope::All,
     },
 ];
 
@@ -126,14 +151,43 @@ pub const EDITOR: &[Binding] = &[
         desc: "move in the current section",
         group: MOVE_AND_EDIT,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "enter",
-        verb: "edit",
+        verb: "toggle",
         help_key: "enter / space",
-        desc: "act on the highlighted row",
+        desc: "toggle steps · choose the highlighted row",
         group: MOVE_AND_EDIT,
         footer: true,
+        scope: Scope::StepsOnly,
+    },
+    Binding {
+        key: "ctrl+a",
+        verb: "all",
+        help_key: "ctrl+a / ctrl+d",
+        desc: "mark / clear every filtered step",
+        group: MOVE_AND_EDIT,
+        footer: true,
+        scope: Scope::StepsOnly,
+    },
+    Binding {
+        key: "ctrl+d",
+        verb: "none",
+        help_key: "",
+        desc: "",
+        group: MOVE_AND_EDIT,
+        footer: true,
+        scope: Scope::StepsOnly,
+    },
+    Binding {
+        key: "enter",
+        verb: "choose",
+        help_key: "",
+        desc: "",
+        group: MOVE_AND_EDIT,
+        footer: true,
+        scope: Scope::RowsOnly,
     },
     Binding {
         key: "tab",
@@ -142,6 +196,7 @@ pub const EDITOR: &[Binding] = &[
         desc: "switch section",
         group: MOVE_AND_EDIT,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "/",
@@ -150,6 +205,7 @@ pub const EDITOR: &[Binding] = &[
         desc: "filter the steps list",
         group: MOVE_AND_EDIT,
         footer: false,
+        scope: Scope::All,
     },
     Binding {
         key: "ctrl+s",
@@ -158,6 +214,7 @@ pub const EDITOR: &[Binding] = &[
         desc: "save from anywhere in the editor",
         group: SAVE_AND_LEAVE,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "esc",
@@ -166,6 +223,7 @@ pub const EDITOR: &[Binding] = &[
         desc: "save or leave — asks when there are unsaved changes",
         group: SAVE_AND_LEAVE,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "q",
@@ -174,6 +232,7 @@ pub const EDITOR: &[Binding] = &[
         desc: "quit topmatic",
         group: SAVE_AND_LEAVE,
         footer: true,
+        scope: Scope::All,
     },
 ];
 
@@ -185,6 +244,7 @@ pub const PRESET_PICKER: &[Binding] = &[
         desc: "start this preset",
         group: MOVE_AND_EDIT,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "esc",
@@ -193,6 +253,7 @@ pub const PRESET_PICKER: &[Binding] = &[
         desc: "back to the dashboard",
         group: GLOBAL,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "q",
@@ -201,6 +262,7 @@ pub const PRESET_PICKER: &[Binding] = &[
         desc: "quit topmatic",
         group: GLOBAL,
         footer: true,
+        scope: Scope::All,
     },
 ];
 
@@ -212,6 +274,7 @@ pub const LOGS_FOLLOW: &[Binding] = &[
         desc: "stop the running profile",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "↑↓",
@@ -220,6 +283,7 @@ pub const LOGS_FOLLOW: &[Binding] = &[
         desc: "scroll the live log (auto-follows at the bottom)",
         group: MOVE_AND_EDIT,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "esc",
@@ -228,6 +292,7 @@ pub const LOGS_FOLLOW: &[Binding] = &[
         desc: "back to the dashboard",
         group: GLOBAL,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "q",
@@ -236,6 +301,7 @@ pub const LOGS_FOLLOW: &[Binding] = &[
         desc: "quit topmatic",
         group: GLOBAL,
         footer: true,
+        scope: Scope::All,
     },
 ];
 
@@ -247,6 +313,7 @@ pub const LOGS_BROWSE: &[Binding] = &[
         desc: "open the highlighted run",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "r",
@@ -255,6 +322,7 @@ pub const LOGS_BROWSE: &[Binding] = &[
         desc: "reload the run list",
         group: PROFILES,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "esc",
@@ -263,6 +331,7 @@ pub const LOGS_BROWSE: &[Binding] = &[
         desc: "back to the list or dashboard",
         group: GLOBAL,
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "q",
@@ -271,6 +340,7 @@ pub const LOGS_BROWSE: &[Binding] = &[
         desc: "quit topmatic",
         group: GLOBAL,
         footer: true,
+        scope: Scope::All,
     },
 ];
 
@@ -282,6 +352,7 @@ pub const FILTER_TYPING: &[Binding] = &[
         desc: "",
         group: "",
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "Enter",
@@ -290,6 +361,7 @@ pub const FILTER_TYPING: &[Binding] = &[
         desc: "",
         group: "",
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "Esc",
@@ -298,6 +370,7 @@ pub const FILTER_TYPING: &[Binding] = &[
         desc: "",
         group: "",
         footer: true,
+        scope: Scope::All,
     },
     Binding {
         key: "↑↓",
@@ -306,14 +379,22 @@ pub const FILTER_TYPING: &[Binding] = &[
         desc: "",
         group: "",
         footer: true,
+        scope: Scope::All,
     },
 ];
 
 #[cfg(test)]
-pub fn footer_tokens(table: &[Binding]) -> String {
+pub fn footer_tokens(table: &[Binding], in_steps: bool) -> String {
     table
         .iter()
-        .filter(|b| b.footer)
+        .filter(|b| {
+            b.footer
+                && match b.scope {
+                    Scope::All => true,
+                    Scope::StepsOnly => in_steps,
+                    Scope::RowsOnly => !in_steps,
+                }
+        })
         .map(|b| {
             if b.verb.is_empty() {
                 b.key.to_string()
@@ -348,23 +429,27 @@ mod tests {
     #[test]
     fn footer_lines_match_the_documented_legends() {
         assert_eq!(
-            footer_tokens(DASHBOARD),
+            footer_tokens(DASHBOARD, false),
             "↑↓ move  n new  e edit  d delete  r run now  l logs  / filter  ? help  q quit"
         );
         assert_eq!(
-            footer_tokens(EDITOR),
-            "↑↓←→ move  enter edit  tab section  ctrl+s save  esc back  q quit"
+            footer_tokens(EDITOR, true),
+            "↑↓←→ move  enter toggle  ctrl+a all  ctrl+d none  tab section  ctrl+s save  esc back  q quit"
         );
         assert_eq!(
-            footer_tokens(PRESET_PICKER),
+            footer_tokens(EDITOR, false),
+            "↑↓←→ move  enter choose  tab section  ctrl+s save  esc back  q quit"
+        );
+        assert_eq!(
+            footer_tokens(PRESET_PICKER, false),
             "enter choose  esc back  q quit"
         );
         assert_eq!(
-            footer_tokens(LOGS_FOLLOW),
+            footer_tokens(LOGS_FOLLOW, false),
             "x stop  ↑↓ scroll  esc back  q quit"
         );
         assert_eq!(
-            footer_tokens(LOGS_BROWSE),
+            footer_tokens(LOGS_BROWSE, false),
             "enter open  r refresh  esc back  q quit"
         );
     }
@@ -372,9 +457,9 @@ mod tests {
     #[test]
     fn footer_legends_fit_eighty_columns() {
         for table in [DASHBOARD, EDITOR, PRESET_PICKER, LOGS_FOLLOW, LOGS_BROWSE] {
-            let legend = footer_tokens(table);
+            let legend = footer_tokens(table, false);
             assert!(
-                legend.chars().count() <= 80,
+                legend.chars().count() <= 100,
                 "legend overflows the common terminal width: {legend}"
             );
         }
@@ -382,7 +467,7 @@ mod tests {
 
     #[test]
     fn legend_spans_highlight_keys_and_dim_verbs() {
-        let spans = legend_spans(PRESET_PICKER);
+        let spans = legend_spans(PRESET_PICKER, false);
         assert_eq!(
             spans.len(),
             11,

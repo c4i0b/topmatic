@@ -357,6 +357,19 @@ impl EditorState {
             self.clamp_steps_selection();
             return EditorEvent::None;
         }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('a' | 'A') => {
+                    self.mark_filtered_steps(true);
+                    return EditorEvent::None;
+                }
+                KeyCode::Char('d' | 'D') => {
+                    self.mark_filtered_steps(false);
+                    return EditorEvent::None;
+                }
+                _ => {}
+            }
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k' | 'K') => self.move_steps_selection(-1),
             KeyCode::Down | KeyCode::Char('j' | 'J') => self.move_steps_selection(1),
@@ -367,6 +380,21 @@ impl EditorState {
             _ => {}
         }
         EditorEvent::None
+    }
+
+    fn mark_filtered_steps(&mut self, marked: bool) {
+        let filtered: Vec<String> = self
+            .filtered_steps()
+            .iter()
+            .map(|step| step.to_string())
+            .collect();
+        for id in filtered {
+            if marked {
+                self.selected_steps.insert(id);
+            } else {
+                self.selected_steps.remove(&id);
+            }
+        }
     }
 
     fn move_steps_selection(&mut self, delta: i64) {
@@ -936,6 +964,53 @@ mod tests {
             editor.handle_key(key(KeyCode::Enter)),
             EditorEvent::Cancel,
             "Discard leaves like the old cancel"
+        );
+    }
+
+    #[test]
+    fn ctrl_a_marks_and_ctrl_d_clears_the_filtered_steps() {
+        let mut editor = editing_editor();
+        editor.section = Section::Steps;
+        let ctrl_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+
+        editor.handle_key(ctrl_a);
+        let total = editor.filtered_steps().len();
+        assert_eq!(
+            editor.selected_steps.len(),
+            total,
+            "ctrl+a marks every step in the grid"
+        );
+
+        editor.steps_filter.edit = LineEdit::new("flat");
+        editor.handle_key(ctrl_d);
+        let filtered: Vec<String> = editor
+            .filtered_steps()
+            .iter()
+            .map(|step| step.to_string())
+            .collect();
+        for step in &filtered {
+            assert!(
+                !editor.selected_steps.contains(step),
+                "ctrl+d clears only the filtered set"
+            );
+        }
+        assert!(
+            !filtered.is_empty(),
+            "the filter matched something for the assertion to mean anything"
+        );
+    }
+
+    #[test]
+    fn bulk_keys_do_nothing_outside_the_steps_section() {
+        let mut editor = editing_editor();
+        editor.section = Section::Schedule;
+        let before = editor.selected_steps.clone();
+        editor.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        editor.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(
+            editor.selected_steps, before,
+            "the bulk keys are steps-only"
         );
     }
 

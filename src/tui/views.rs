@@ -111,9 +111,12 @@ fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
     let mut hint_spans = vec![Span::raw(" ")];
     if filter_typing {
         hint_spans.push(Span::raw("filter: "));
-        hint_spans.extend(bindings::legend_spans(bindings::FILTER_TYPING));
+        hint_spans.extend(bindings::legend_spans(bindings::FILTER_TYPING, false));
     } else {
-        hint_spans.extend(bindings::legend_spans(footer_table(&app.view)));
+        hint_spans.extend(bindings::legend_spans(
+            footer_table(&app.view),
+            editor_in_steps(&app.view),
+        ));
     }
     let prefix = if let Some(active_filter) = active_filter(app) {
         Some((format!(" /{}", active_filter), Color::Yellow))
@@ -140,6 +143,10 @@ fn draw_footer(app: &App, frame: &mut Frame, area: Rect) {
         }
         None => frame.render_widget(Paragraph::new(Line::from(hint_spans)), area),
     }
+}
+
+fn editor_in_steps(view: &View) -> bool {
+    matches!(&view, View::Editor(state) if state.section == editor::Section::Steps)
 }
 
 fn footer_table(view: &View) -> &'static [bindings::Binding] {
@@ -256,21 +263,15 @@ pub(crate) fn name_popup_hint(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn footer_hints(view: &View, filter_active: bool) -> String {
     if filter_active {
         return format!(
             "filter: {}",
-            bindings::footer_tokens(bindings::FILTER_TYPING)
+            bindings::footer_tokens(bindings::FILTER_TYPING, false)
         );
     }
-    let table = match view {
-        View::Dashboard => bindings::DASHBOARD,
-        View::Editor(_) => bindings::EDITOR,
-        View::PresetPicker { .. } => bindings::PRESET_PICKER,
-        View::Logs(state) if state.follow => bindings::LOGS_FOLLOW,
-        View::Logs(_) => bindings::LOGS_BROWSE,
-    };
-    bindings::footer_tokens(table)
+    bindings::footer_tokens(footer_table(view), editor_in_steps(view))
 }
 
 fn draw_editor(state: &editor::EditorState, frame: &mut Frame, area: Rect) {
@@ -647,27 +648,29 @@ mod tests {
 
     #[test]
     fn footer_hints_cover_every_view_and_lead_with_the_primary_action() {
+        let mut rows_state = EditorState::new(
+            None,
+            Vec::new(),
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        rows_state.section = editor::Section::Options;
         assert!(
-            footer_hints(
-                &View::Editor(Box::new(EditorState::new(
-                    None,
-                    Vec::new(),
-                    crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC
-                )),),
-                false
-            )
-            .contains("enter edit")
+            footer_hints(&View::Editor(Box::new(rows_state)), false).contains("enter choose"),
+            "rows sections choose"
+        );
+        let mut steps_state = EditorState::new(
+            None,
+            Vec::new(),
+            crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
+        );
+        steps_state.section = editor::Section::Steps;
+        let steps_hint = footer_hints(&View::Editor(Box::new(steps_state)), false);
+        assert!(
+            steps_hint.contains("enter toggle") && steps_hint.contains("ctrl+a all"),
+            "steps focus toggles and shows the bulk keys: {steps_hint}"
         );
         assert!(
-            !footer_hints(
-                &View::Editor(Box::new(EditorState::new(
-                    None,
-                    Vec::new(),
-                    crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC
-                )),),
-                false
-            )
-            .contains("/ filter steps"),
+            !steps_hint.contains("/ filter steps"),
             "the editor hint no longer advertises '/ filter'"
         );
         assert!(footer_hints(&View::Dashboard, false).contains("q quit"));

@@ -234,11 +234,20 @@ fn draw_activity_panel(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-pub(crate) fn name_popup_hint(value: &str) -> &'static str {
-    if crate::domain::profile::sanitize_name(value).is_ok() {
-        " enter saves · esc back"
+pub(crate) fn name_popup_hint(value: &str) -> String {
+    let len = value.trim().chars().count();
+    let counter = if len > 56 {
+        format!(" · {len}/64")
     } else {
-        " letters, digits, . _ - (start alnum, max 64) · esc back"
+        String::new()
+    };
+    if len > 64 {
+        return format!(" name too long (max 64){counter} · esc back");
+    }
+    if crate::domain::profile::sanitize_name(value).is_ok() {
+        format!(" enter saves{counter} · esc back")
+    } else {
+        " letters, digits, . _ - (start alnum, max 64) · esc back".to_string()
     }
 }
 
@@ -605,6 +614,24 @@ mod tests {
         assert!(name_popup_hint("all-daily").contains("enter saves"));
         assert!(name_popup_hint("bad name").contains("letters"));
         assert!(name_popup_hint("").contains("letters"));
+    }
+
+    #[test]
+    fn name_popup_hint_names_the_actual_problem_near_the_limit() {
+        let near = "a".repeat(60);
+        let hint = name_popup_hint(&near);
+        assert!(
+            hint.contains("enter saves") && hint.contains("60/64"),
+            "the counter appears once past 56 chars: {hint}"
+        );
+
+        let over = "a".repeat(70);
+        let hint = name_popup_hint(&over);
+        assert!(
+            hint.contains("name too long") && hint.contains("70/64"),
+            "the specific error beats the generic requirements dump: {hint}"
+        );
+        assert!(!hint.contains("letters, digits"));
     }
 
     #[test]

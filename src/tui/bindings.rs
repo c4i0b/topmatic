@@ -249,7 +249,7 @@ pub const PRESET_PICKER: &[Binding] = &[
     Binding {
         key: "esc",
         verb: "back",
-        help_key: "esc",
+        help_key: "esc / l",
         desc: "back to the dashboard",
         group: GLOBAL,
         footer: true,
@@ -327,8 +327,8 @@ pub const LOGS_BROWSE: &[Binding] = &[
     Binding {
         key: "esc",
         verb: "back",
-        help_key: "esc / h",
-        desc: "back to the list or dashboard",
+        help_key: "esc / h / l",
+        desc: "leave the log view; enter closes an open run",
         group: GLOBAL,
         footer: true,
         scope: Scope::All,

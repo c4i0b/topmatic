@@ -88,7 +88,7 @@ impl LogsState {
         if self.follow {
             let page = self.page();
             return match key.code {
-                KeyCode::Esc | KeyCode::Char('h' | 'H') => true,
+                KeyCode::Esc | KeyCode::Char('h' | 'H' | 'l' | 'L') => true,
                 KeyCode::Up | KeyCode::Char('k' | 'K') => {
                     self.follow_offset = self.follow_offset.saturating_add(1);
                     false
@@ -118,7 +118,7 @@ impl LogsState {
         }
         let page = self.page() as usize;
         match key.code {
-            KeyCode::Esc | KeyCode::Char('h' | 'H') => return true,
+            KeyCode::Esc | KeyCode::Char('h' | 'H' | 'l' | 'L') => return true,
             KeyCode::Up | KeyCode::Char('k' | 'K') => {
                 if self.content.is_some() {
                     self.scroll = self.scroll.saturating_sub(1);
@@ -171,7 +171,10 @@ impl LogsState {
                 }
             }
             KeyCode::Enter => {
-                if self.content.is_none() && !self.entries.is_empty() {
+                if self.content.is_some() {
+                    return true;
+                }
+                if !self.entries.is_empty() {
                     self.load_selected();
                 }
             }
@@ -270,7 +273,7 @@ pub fn render(state: &LogsState, frame: &mut Frame, area: Rect) {
             .block(
                 Block::bordered()
                     .title(format!(
-                        "{} — {} (Esc/back to list, j/k scroll)",
+                        "{} — {} (esc back, j/k scroll)",
                         state.profile,
                         state
                             .entries
@@ -359,6 +362,40 @@ mod tests {
         assert_eq!(tail(&paths, "alpha", 2).unwrap(), "l3\nl4");
         assert_eq!(tail(&paths, "alpha", 10).unwrap(), "l1\nl2\nl3\nl4");
         assert!(tail(&paths, "ghost", 5).is_none());
+    }
+
+    #[test]
+    fn l_and_enter_leave_the_log_screens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::with_bases(tmp.path().join("cfg"), tmp.path().join("state"));
+        let dir = paths.logs_dir("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("20260101-010101.log"), "run output\n").unwrap();
+
+        let mut state = LogsState::open(&paths, "alpha");
+        assert!(
+            state.content.is_some(),
+            "opening a run list preloads the newest run"
+        );
+        assert!(
+            state.handle_key(key(KeyCode::Enter)),
+            "enter with content open leaves the screen (inherits esc)"
+        );
+        state.handle_key(key(KeyCode::Backspace));
+        assert!(
+            !state.handle_key(key(KeyCode::Enter)),
+            "enter on the bare list opens the highlighted run again"
+        );
+        assert!(
+            state.handle_key(key(KeyCode::Char('l'))),
+            "l leaves the browse view, mirroring the dashboard l that enters"
+        );
+
+        let mut follow = LogsState::follow("alpha");
+        assert!(
+            follow.handle_key(key(KeyCode::Char('l'))),
+            "l leaves the live view too"
+        );
     }
 
     #[test]

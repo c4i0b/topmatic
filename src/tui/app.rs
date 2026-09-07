@@ -68,6 +68,7 @@ pub struct App {
     pub message: String,
     pub seen_message: String,
     pub message_expires_at_tick: u64,
+    pub message_is_error: bool,
     pub activity: Arc<Mutex<ActivityLog>>,
     pub activity_panel: bool,
     pub activity_scroll: usize,
@@ -152,6 +153,7 @@ impl App {
             message: String::new(),
             seen_message: String::new(),
             message_expires_at_tick: 0,
+            message_is_error: false,
             activity,
             activity_panel: false,
             activity_scroll: 0,
@@ -164,7 +166,7 @@ impl App {
         let report = systemd_sync::sync(&app.config, &app.topmatic_bin, app.ctl.as_ref());
         if !report.errors.is_empty() {
             let detail = format!("sync errors: {}", report.errors.join("; "));
-            app.message.clone_from(&detail);
+            app.set_error_message(detail.clone());
             app.log(ActivityKind::Error, detail);
         }
         let synced_text = format!(
@@ -257,6 +259,19 @@ impl App {
         self.activity.lock().unwrap().log(kind, text.into());
     }
 
+    fn set_error_message(&mut self, text: String) {
+        self.message = text;
+        self.message_is_error = true;
+    }
+
+    fn clear_error_message(&mut self) {
+        if self.message_is_error {
+            self.message.clear();
+            self.seen_message.clear();
+            self.message_is_error = false;
+        }
+    }
+
     pub fn spawn_background(
         &mut self,
         label: impl Into<String>,
@@ -302,10 +317,11 @@ impl App {
         match outcome {
             JobOutcome::Success(action) => {
                 self.log(ActivityKind::Action, action);
+                self.clear_error_message();
             }
             JobOutcome::Error(message) => {
                 self.log(ActivityKind::Error, message.clone());
-                self.message = message;
+                self.set_error_message(message);
             }
         }
         self.rebuild_rows();
@@ -324,7 +340,10 @@ impl App {
         if self.message != self.seen_message {
             self.seen_message = self.message.clone();
             self.message_expires_at_tick = self.tick + MESSAGE_TTL_TICKS;
-        } else if !self.message.is_empty() && self.tick >= self.message_expires_at_tick {
+        } else if !self.message.is_empty()
+            && !self.message_is_error
+            && self.tick >= self.message_expires_at_tick
+        {
             self.message.clear();
             self.seen_message.clear();
         }
@@ -362,7 +381,7 @@ impl App {
                 (Some(outcome), true) => {
                     let detail =
                         format!("{name} FAILED (exit {:?})", outcome.exit_code.unwrap_or(1));
-                    self.message.clone_from(&detail);
+                    self.set_error_message(detail.clone());
                     self.log(ActivityKind::Error, detail);
                 }
                 _ => self.log(ActivityKind::Action, format!("{name} stopped")),
@@ -689,13 +708,13 @@ impl App {
         let profile = match state.to_profile(&state.final_name()) {
             Ok(profile) => profile,
             Err(error) => {
-                self.message = error;
+                self.set_error_message(error);
                 self.view = View::Editor(Box::new(state));
                 return;
             }
         };
         if let Err(error) = editor::validate_draft(&profile) {
-            self.message = error;
+            self.set_error_message(error);
             self.view = View::Editor(Box::new(state));
             return;
         }
@@ -703,7 +722,7 @@ impl App {
             match config::save_plan(&self.config, state.original_name.as_deref(), &profile.name) {
                 Ok(plan) => plan,
                 Err(error) => {
-                    self.message = error;
+                    self.set_error_message(error);
                     let mut state = state;
                     state.reopen_name_popup();
                     self.view = View::Editor(Box::new(state));
@@ -717,10 +736,11 @@ impl App {
         }
         self.config.upsert(profile.clone());
         if let Err(error) = config::save(&self.paths, &self.config) {
-            self.message = format!("save failed: {error}");
+            self.set_error_message(format!("save failed: {error}"));
             self.view = View::Editor(Box::new(state));
             return;
         }
+        self.clear_error_message();
         let name = profile.name.clone();
         self.spawn_sync_job(format!("saving {name}"), move |report| {
             if report.errors.is_empty() {
@@ -734,7 +754,7 @@ impl App {
     fn delete_profile(&mut self, name: &str) {
         self.config.remove(name);
         if let Err(error) = config::save(&self.paths, &self.config) {
-            self.message = format!("save failed: {error}");
+            self.set_error_message(format!("save failed: {error}"));
         }
         let _ = crate::systemd::sync::purge_profile_state(&self.paths, name);
         let name = name.to_string();
@@ -1647,6 +1667,29 @@ mod tests {
         assert!(matches!(app.view, View::Logs(_)));
         app.handle_key(key(KeyCode::Esc));
         assert!(matches!(app.view, View::Dashboard));
+    }
+
+    #[test]
+    fn error_messages_stick_until_success_replaces_them() {
+        let (mut app, harness) = harness(&[profile("all-daily")]);
+        app.set_error_message("start failed: boom".to_string());
+        for _ in 0..MESSAGE_TTL_TICKS + 10 {
+            app.on_tick();
+        }
+        assert!(
+            !app.message.is_empty() && app.message.contains("start failed"),
+            "errors do not expire like info: {}",
+            app.message
+        );
+
+        app.handle_key(key(KeyCode::Char('r')));
+        settle(&mut app);
+        assert!(
+            app.message.is_empty(),
+            "a successful job clears the sticky error: {:?}",
+            app.message
+        );
+        drop(harness);
     }
 
     #[test]

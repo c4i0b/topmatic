@@ -189,10 +189,6 @@ impl LogsState {
             KeyCode::Backspace => {
                 self.content = None;
             }
-            KeyCode::Char('r' | 'R') => {
-                let paths = Paths::from_env();
-                self.reload(&paths);
-            }
             _ => {}
         }
         false

@@ -10,6 +10,8 @@ Enter
 Sleep 3s
 Type "n"
 Sleep 1s
+Type "jjj"
+Sleep 500ms
 Enter
 Sleep 1s
 Type "/car"

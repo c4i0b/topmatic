@@ -110,7 +110,7 @@ pub const EDITOR: &[Binding] = &[
         help_key: "ctrl+s",
         desc: "save from anywhere in the editor",
         group: SAVE_AND_LEAVE,
-        foot: Foot::DirtyOnly,
+        foot: Foot::Always,
     },
     Binding {
         key: "esc",
@@ -276,24 +276,17 @@ pub const LOGS_BROWSE: &[Binding] = &[
 ];
 
 pub fn footer_tokens(table: &[Binding], dirty: bool) -> String {
-    let visible = |b: &Binding| match b.foot {
-        Foot::Always => true,
-        Foot::DirtyOnly => dirty,
-        Foot::CleanOnly => !dirty,
-        Foot::Never => false,
-    };
-    let mut tokens: Vec<String> = table
+    table
         .iter()
-        .filter(|b| dirty && b.foot == Foot::DirtyOnly)
+        .filter(|b| match b.foot {
+            Foot::Always => true,
+            Foot::DirtyOnly => dirty,
+            Foot::CleanOnly => !dirty,
+            Foot::Never => false,
+        })
         .map(|b| format!("{} {}", b.key, b.verb))
-        .collect();
-    tokens.extend(
-        table
-            .iter()
-            .filter(|b| visible(b) && b.foot != Foot::DirtyOnly)
-            .map(|b| format!("{} {}", b.key, b.verb)),
-    );
-    tokens.join("  ")
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 pub fn help_groups(table: &[Binding]) -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
@@ -324,7 +317,7 @@ mod tests {
         );
         assert_eq!(
             footer_tokens(EDITOR, false),
-            "↑↓←→ move  enter edit  tab section  esc back  q quit"
+            "ctrl+s save  ↑↓←→ move  enter edit  tab section  esc back  q quit"
         );
         assert_eq!(
             footer_tokens(EDITOR, true),

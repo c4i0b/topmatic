@@ -511,8 +511,8 @@ mod tests {
             crate::domain::schedule::DEFAULT_RANDOM_DELAY_SEC,
         );
         assert!(
-            footer_hints(&View::Editor(Box::new(state)), false).contains("esc back"),
-            "a clean editor keeps the plain legend"
+            footer_hints(&View::Editor(Box::new(state)), false).starts_with("ctrl+s save"),
+            "the save command is visible even when clean"
         );
         let mut dirty = EditorState::new(
             None,

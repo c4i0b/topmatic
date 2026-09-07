@@ -42,6 +42,12 @@ impl NotifyPolicy {
 pub struct Profile {
     pub name: String,
     pub steps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_steps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_steps: Vec<String>,
     pub schedule: Schedule,
     #[serde(default)]
     pub notify: NotifyPolicy,

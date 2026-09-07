@@ -174,6 +174,9 @@ mod tests {
     fn editing_editor() -> EditorState {
         let profile = Profile {
             name: "all-daily".to_string(),
+            base: None,
+            extra_steps: Vec::new(),
+            excluded_steps: Vec::new(),
             steps: vec!["flatpak".to_string()],
             schedule: Schedule::default(),
             notify: NotifyPolicy::OnFailure,

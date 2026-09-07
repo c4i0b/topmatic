@@ -257,6 +257,9 @@ mod tests {
     fn profile_with_steps(steps: usize) -> Profile {
         Profile {
             name: "all-daily".to_string(),
+            base: None,
+            extra_steps: Vec::new(),
+            excluded_steps: Vec::new(),
             steps: (0..steps).map(|i| format!("step_{i}")).collect(),
             schedule: crate::domain::schedule::Schedule::default(),
             notify: crate::domain::profile::NotifyPolicy::OnFailure,
@@ -346,6 +349,9 @@ mod tests {
     fn dashboard_tape_golden_detail_pane_never_splits_a_token() {
         let profile = Profile {
             name: "all-daily".to_string(),
+            base: None,
+            extra_steps: Vec::new(),
+            excluded_steps: Vec::new(),
             steps: vec![
                 "am".into(),
                 "android_studio".into(),

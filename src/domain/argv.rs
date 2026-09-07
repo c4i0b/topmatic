@@ -33,6 +33,9 @@ mod tests {
     fn profile(steps: &[&str]) -> Profile {
         Profile {
             name: "flatpak-daily".to_string(),
+            base: None,
+            extra_steps: Vec::new(),
+            excluded_steps: Vec::new(),
             steps: steps.iter().map(|s| s.to_string()).collect(),
             schedule: Schedule::default(),
             notify: NotifyPolicy::default(),

@@ -102,6 +102,9 @@ impl Fixture {
         Profile {
             name: name.to_string(),
             steps: vec!["flatpak".to_string(), "cargo".to_string()],
+            base: None,
+            extra_steps: Vec::new(),
+            excluded_steps: Vec::new(),
             schedule: Schedule::default(),
             notify,
             scope: Default::default(),

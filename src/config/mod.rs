@@ -451,6 +451,9 @@ mod tests {
     fn sample_profile(name: &str) -> Profile {
         Profile {
             name: name.to_string(),
+            base: None,
+            extra_steps: Vec::new(),
+            excluded_steps: Vec::new(),
             steps: vec!["flatpak".to_string()],
             schedule: Schedule::default(),
             notify: Default::default(),

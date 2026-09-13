@@ -30,6 +30,7 @@ Topmatic turns Topgrade into scheduled jobs you manage from a TUI.
   plus derivatives like Mint and Zorin (Ubuntu family) and Bazzite (Fedora Atomic).
   systemd is the only scheduler supported today
 - [Topgrade](https://github.com/topgrade-rs/topgrade) in `PATH`
+  (17.11 or newer recommended: a few steps still prompt in unattended runs before it)
 - Rust 1.85 or newer.
   Topmatic installs from source
 
@@ -64,10 +65,22 @@ It installs the user units and converges the timers.
 Topmatic refuses to run as root.
 It manages your user's systemd session, so sudo would act on root's units instead.
 Run it as your regular user.
-
-To let timers fire while logged out enable lingering yourself:
-`loginctl enable-linger`.
 Topmatic never runs anything privileged.
+
+### When you log out
+
+Systemd timers fire only while your session is open.
+With linger on they keep firing after you log out, so updates happen on time even when you are away.
+With linger off they wait for your next login, and missed runs catch up then.
+
+Linger is off by default:
+
+```sh
+loginctl enable-linger    # let updates run without a session
+loginctl disable-linger   # restore login-only updates
+```
+
+Topmatic shows the current state on the dashboard header and in `topmatic doctor`.
 
 ## Use
 
@@ -88,6 +101,10 @@ Every key is shown in the footer of each screen.
   No name to type, no editor to cross
 - `All` runs everything installed with no step list.
   It picks up steps Topgrade gains later
+- `All` stays user-level: host-wide steps that need
+  root (system packages, firmware, snaps) are disabled
+  for you, while your own containers, distroboxes and
+  toolboxes are updated
 - Editing a preset keeps only your changes in the config
   (`extra_steps`, `excluded_steps`, schedule).
   Reverted overrides disappear again

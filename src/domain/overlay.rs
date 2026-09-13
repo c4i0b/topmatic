@@ -263,6 +263,12 @@ mod tests {
                 .all(|step| ignored.contains(&step.to_string())),
             "the whole privileged list lands in the ignore set — no-sudo premise holds"
         );
+        for user_level in ["containers", "distrobox", "toolbx"] {
+            assert!(
+                !ignored.contains(&user_level.to_string()),
+                "{user_level} is user-level and must run in everything mode"
+            );
+        }
         assert_eq!(ignored, {
             let mut sorted = ignored.clone();
             sorted.sort();

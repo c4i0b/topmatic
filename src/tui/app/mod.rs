@@ -213,14 +213,10 @@ impl App {
     }
 
     fn load_catalog(&self) -> Vec<String> {
-        if let Some(bin) = &self.topgrade_bin
-            && let Ok(output) = std::process::Command::new(bin).arg("--help").output()
-            && output.status.success()
-        {
-            let text = String::from_utf8_lossy(&output.stdout);
-            return crate::domain::steps::catalog(&text);
-        }
-        presets::fallback_catalog()
+        self.topgrade_bin
+            .as_deref()
+            .and_then(crate::runner::resolve::live_catalog)
+            .unwrap_or_else(presets::fallback_catalog)
     }
 
     pub fn log(&mut self, kind: ActivityKind, text: impl Into<String>) {

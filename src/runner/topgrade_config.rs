@@ -1,3 +1,10 @@
+fn disable_name(step: &str) -> &str {
+    match step {
+        "am" => "a_m",
+        other => other,
+    }
+}
+
 pub fn render(ignore: &[String]) -> String {
     let mut lines: Vec<String> = vec![
         "# Managed by topmatic. Manual edits will be overwritten.".to_string(),
@@ -11,7 +18,7 @@ pub fn render(ignore: &[String]) -> String {
     if !ignore.is_empty() {
         let list = ignore
             .iter()
-            .map(|step| format!("\"{step}\""))
+            .map(|step| format!("\"{}\"", disable_name(step)))
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!("disable = [{list}]"));
@@ -26,6 +33,21 @@ pub fn write_if_changed(path: &std::path::Path, ignore: &[String]) -> std::io::R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const HELP: &str = include_str!("../../tests/fixtures/topgrade_help.txt");
+    const DISABLE_ERROR: &str = include_str!("../../tests/fixtures/topgrade_disable_error.txt");
+
+    fn accepted_disable_names() -> Vec<&'static str> {
+        let line = DISABLE_ERROR
+            .lines()
+            .find(|l| l.contains("expected one of `"))
+            .expect("fixture must carry the real variant list");
+        let rest = &line[line.find("expected one of `").unwrap() + "expected one of `".len()..];
+        rest.trim_end_matches('.')
+            .split("`, `")
+            .map(|name| name.trim_matches('`'))
+            .collect()
+    }
 
     #[test]
     fn renders_unattended_defaults() {
@@ -87,5 +109,40 @@ mod tests {
         let text = render(&[]);
         assert!(!text.contains("skip_notify"), "deprecated in topgrade");
         assert!(!text.contains("no_retry"), "legacy alias of ask_retry");
+    }
+
+    #[test]
+    fn clap_serde_spelling_divergence_is_mapped_at_the_config_edge() {
+        assert_eq!(disable_name("am"), "a_m");
+        assert_eq!(disable_name("a_m"), "a_m");
+        assert_eq!(disable_name("flatpak"), "flatpak");
+        let parsed: toml::Value = toml::from_str(&render(&["am".to_string()])).unwrap();
+        assert_eq!(
+            parsed.get("disable").and_then(|v| v.as_array()),
+            Some(&vec![toml::Value::String("a_m".to_string())]),
+            "topgrade silently drops the whole config on an unknown variant"
+        );
+    }
+
+    #[test]
+    fn every_emittable_disable_name_is_accepted_by_real_topgrade() {
+        let accepted = accepted_disable_names();
+        assert!(
+            accepted.len() > 170,
+            "fixture looks wrong: {} accepted names",
+            accepted.len()
+        );
+        let mut emittable: Vec<String> = crate::domain::steps::PRIVILEGED_STEPS
+            .iter()
+            .map(|step| step.to_string())
+            .collect();
+        emittable.extend(crate::domain::steps::catalog(HELP));
+        for step in &emittable {
+            let name = disable_name(step);
+            assert!(
+                accepted.contains(&name),
+                "topgrade rejects disable name {name:?} (from step {step:?}); update disable_name"
+            );
+        }
     }
 }

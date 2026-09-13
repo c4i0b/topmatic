@@ -5,10 +5,7 @@ pub const PRIVILEGED_STEPS: &[&str] = &[
     "audit",
     "config_update",
     "mandb",
-    "containers",
     "waydroid",
-    "toolbx",
-    "distrobox",
     "self_update",
     "restarts",
 ];
@@ -103,8 +100,32 @@ mod tests {
     fn flags_privileged_steps() {
         assert!(is_privileged("system"));
         assert!(is_privileged("firmware"));
+        assert!(
+            is_privileged("snap"),
+            "sudo snap refresh in topgrade source"
+        );
+        assert!(
+            is_privileged("restarts"),
+            "sudo needrestart in topgrade source"
+        );
         assert!(!is_privileged("flatpak"));
         assert!(!is_privileged("cargo"));
+    }
+
+    #[test]
+    fn user_level_container_steps_are_not_privileged() {
+        assert!(
+            !is_privileged("containers"),
+            "docker/podman pulls never sudo unless use_sudo is set"
+        );
+        assert!(
+            !is_privileged("distrobox"),
+            "distrobox upgrade runs rootless"
+        );
+        assert!(
+            !is_privileged("toolbx"),
+            "toolbx updates run inside user containers"
+        );
     }
 
     #[test]
@@ -114,5 +135,8 @@ mod tests {
         assert!(!steps.contains(&"system".to_string()));
         assert!(!steps.contains(&"firmware".to_string()));
         assert!(steps.contains(&"flatpak".to_string()));
+        assert!(steps.contains(&"distrobox".to_string()));
+        assert!(steps.contains(&"containers".to_string()));
+        assert!(steps.contains(&"toolbx".to_string()));
     }
 }

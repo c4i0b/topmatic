@@ -194,6 +194,60 @@ fn topgrade_config_file_is_written_and_isolated() {
 }
 
 #[test]
+fn everything_mode_excludes_use_serde_spelling_for_topgrade() {
+    let fixture = Fixture::new();
+    let mut profile = Fixture::profile("all-user-daily", NotifyPolicy::Never);
+    profile.base = Some("all".to_string());
+    profile.steps.clear();
+    profile.excluded_steps = vec!["am".to_string()];
+    fixture.save_config(&[profile]);
+    let topgrade = fixture.topgrade();
+
+    runner::run(
+        &fixture.stored_profile("all-user-daily"),
+        &topgrade,
+        &fixture.paths,
+        &NullNotify,
+        false,
+    )
+    .unwrap();
+
+    let content = fs::read_to_string(fixture.paths.topgrade_config_file()).unwrap();
+    let parsed: toml::Value = toml::from_str(&content).unwrap();
+    let disabled: Vec<&str> = parsed
+        .get("disable")
+        .and_then(|v| v.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert!(
+        disabled.contains(&"a_m"),
+        "disable must carry the serde spelling, got {disabled:?}"
+    );
+    assert!(
+        !disabled.contains(&"am"),
+        "clap spelling would make topgrade drop the whole config, got {disabled:?}"
+    );
+    assert!(
+        !disabled.contains(&"am"),
+        "clap spelling would make topgrade drop the whole config, got {disabled:?}"
+    );
+    assert!(
+        disabled.contains(&"system"),
+        "privileged steps stay disabled"
+    );
+    assert!(
+        !disabled.contains(&"distrobox")
+            && !disabled.contains(&"containers")
+            && !disabled.contains(&"toolbx"),
+        "user-level container steps must run in everything mode, got {disabled:?}"
+    );
+}
+
+#[test]
 fn dry_run_flag_is_forwarded() {
     let fixture = Fixture::new();
     fixture.save_config(&[Fixture::profile("flatpak-daily", NotifyPolicy::Never)]);
@@ -386,4 +440,32 @@ fn plain_run_keeps_single_attempt_semantics() {
 
     assert!(!outcome.success);
     assert_eq!(fixture.count("count.txt"), "1");
+}
+
+const STUB_HELP_TOPGRADE: &str = r#"#!/bin/sh
+cat <<'EOF'
+      --only <STEP>...
+          Perform only the specified steps
+
+          [possible values: am, flatpak, system]
+EOF
+"#;
+
+#[test]
+fn live_catalog_parses_steps_from_real_help_shaped_output() {
+    let fixture = Fixture::new();
+    let topgrade = fixture.write_stub("topgrade", STUB_HELP_TOPGRADE);
+
+    let catalog = topmatic::runner::resolve::live_catalog(&topgrade)
+        .expect("stub help must parse into a catalog");
+
+    assert_eq!(catalog, vec!["am".to_string(), "flatpak".to_string()]);
+}
+
+#[test]
+fn live_catalog_returns_none_for_failing_or_missing_binary() {
+    let fixture = Fixture::new();
+    let failing = fixture.write_stub("topgrade", "#!/bin/sh\nexit 3\n");
+    assert!(topmatic::runner::resolve::live_catalog(&failing).is_none());
+    assert!(topmatic::runner::resolve::live_catalog(&fixture.bin_dir.join("missing")).is_none());
 }

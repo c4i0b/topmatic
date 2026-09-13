@@ -37,6 +37,12 @@ deploy:
 fixture:
     topgrade --help > tests/fixtures/topgrade_help.txt
 
+# Regenerate the accepted disable-names fixture from the real deserialize error
+# (run `fixture` and `fixture-disable` with the SAME topgrade version)
+fixture-disable:
+    printf 'disable = ["__probe_unknown__"]\n' > /tmp/topmatic_probe.toml
+    topgrade --config /tmp/topmatic_probe.toml --dry-run 2>/dev/null | head -5 > tests/fixtures/topgrade_disable_error.txt
+
 # Host-side dry-run verification of a profile
 verify profile:
     ~/.cargo/bin/topmatic run {{profile}} --dry-run

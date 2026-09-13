@@ -7,6 +7,8 @@ mod run;
 mod sync;
 
 #[cfg(test)]
+mod doctor_tests;
+#[cfg(test)]
 mod guard_tests;
 
 use crate::systemd::RealSystemdCtl;

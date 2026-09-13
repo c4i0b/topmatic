@@ -1,6 +1,22 @@
 use crate::paths::Paths;
 use crate::systemd::SystemdCtl;
 
+const RECOMMENDED_TOPGRADE: (u64, u64, u64) = (17, 11, 0);
+
+pub(super) fn topgrade_version(output: &str) -> Option<(u64, u64, u64)> {
+    let version = output.trim().strip_prefix("topgrade ")?.trim();
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+pub(super) fn version_hint(output: &str) -> Option<(u64, u64, u64)> {
+    let parsed = topgrade_version(output)?;
+    (parsed < RECOMMENDED_TOPGRADE).then_some(parsed)
+}
+
 pub fn run(repair: bool) -> anyhow::Result<()> {
     let paths = Paths::from_env();
     let path_env = std::env::var("PATH").unwrap_or_default();
@@ -14,7 +30,22 @@ pub fn run(repair: bool) -> anyhow::Result<()> {
                 .ok()
                 .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
                 .unwrap_or_default();
-            println!("ok:   topgrade {version}");
+            match version_hint(&version) {
+                Some((major, minor, _)) => {
+                    println!("ok:   topgrade {major}.{minor}");
+                    println!(
+                        "info: topgrade {major}.{minor} predates 17.11; a few steps can still prompt during unattended runs"
+                    );
+                    println!("      upgrade to 17.11 or newer: cargo install topgrade");
+                }
+                None => match topgrade_version(&version) {
+                    Some((major, minor, patch)) => {
+                        println!("ok:   topgrade {major}.{minor}.{patch}")
+                    }
+                    None if version.is_empty() => println!("ok:   topgrade found in PATH"),
+                    None => println!("ok:   topgrade {version}"),
+                },
+            }
         }
         None => {
             failures += 1;

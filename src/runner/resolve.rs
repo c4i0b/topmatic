@@ -12,6 +12,18 @@ pub fn find_in_path(name: &str, path_value: &str) -> Option<PathBuf> {
         })
 }
 
+pub fn live_catalog(bin: &Path) -> Option<Vec<String>> {
+    let output = std::process::Command::new(bin)
+        .arg("--help")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Some(crate::domain::steps::catalog(&text))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -356,19 +356,9 @@ mod tests {
     }
 
     #[test]
-    fn validates_calendar_expressions_when_tool_exists() {
-        if which_systemd_analyze().is_none() {
-            return;
-        }
+    fn validates_calendar_expressions() {
         assert!(validate_on_calendar("*-*-* 12:00:00").is_ok());
         assert!(validate_on_calendar("definitely not a calendar").is_err());
-    }
-
-    fn which_systemd_analyze() -> Option<PathBuf> {
-        let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("systemd-analyze"))
-            .find(|candidate| candidate.is_file())
     }
 
     #[test]

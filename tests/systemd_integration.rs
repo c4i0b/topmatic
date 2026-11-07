@@ -1,17 +1,8 @@
-use std::path::PathBuf;
 use std::process::Command;
 
 use topmatic::systemd::parse_systemd_timestamp;
 
 const TIMER_NAME: &str = "topmatic-itest.timer";
-
-fn systemd_user_available() -> bool {
-    Command::new("systemctl")
-        .args(["--user", "is-system-running"])
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
 
 fn systemctl(args: &[&str]) -> bool {
     Command::new("systemctl")
@@ -22,45 +13,36 @@ fn systemctl(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-struct TransientTimer {
-    path: PathBuf,
-}
+struct TransientTimer {}
 
 impl TransientTimer {
     fn install() -> Option<Self> {
-        let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        let unit_dir = home.join(".config/systemd/user");
-        std::fs::create_dir_all(&unit_dir).ok()?;
-        let path = unit_dir.join(TIMER_NAME);
-        std::fs::write(
-            &path,
-            "[Unit]\nDescription=topmatic integration test\n\n[Timer]\nOnCalendar=daily\n\n[Install]\nWantedBy=timers.target\n",
-        )
-        .ok()?;
-        if !systemctl(&["daemon-reload"]) || !systemctl(&["start", TIMER_NAME]) {
-            let _ = std::fs::remove_file(&path);
-            let _ = systemctl(&["daemon-reload"]);
-            return None;
-        }
-        Some(Self { path })
+        Command::new("systemd-run")
+            .args([
+                "--user",
+                "--unit=topmatic-itest",
+                "--on-calendar=daily",
+                "/bin/true",
+            ])
+            .status()
+            .ok()?
+            .success()
+            .then_some(Self {})
     }
 }
 
 impl Drop for TransientTimer {
     fn drop(&mut self) {
         let _ = systemctl(&["stop", TIMER_NAME]);
-        let _ = std::fs::remove_file(&self.path);
-        let _ = systemctl(&["daemon-reload"]);
+        let _ = systemctl(&["reset-failed", "topmatic-itest.service"]);
     }
 }
 
 #[test]
+#[ignore = "live: needs a real user systemd session (just test-live)"]
 fn parser_accepts_real_systemctl_next_elapse_output() {
-    if !systemd_user_available() {
-        return;
-    }
     let Some(_timer) = TransientTimer::install() else {
-        return;
+        panic!("user systemd is running but the transient timer could not be installed");
     };
 
     let output = Command::new("systemctl")

@@ -1,6 +1,6 @@
 # Agent Instructions
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
@@ -20,7 +20,7 @@ bd close <id>         # Complete work
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
 
 ## Agent Context Profiles
 
@@ -44,6 +44,7 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
    # Team-maintainer opt-in only, unless current instructions forbid it:
    git pull --rebase
+   bd dolt push
    git push
    git status
    ```
@@ -76,37 +77,40 @@ bd prime                # Refresh Beads context
 - Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
 - Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
 
 ## topmatic
 
-User-level update scheduler on top of topgrade, no sudo. topgrade always runs with `--config` pointing to a topmatic-owned file; the user's own `topgrade.toml` is never read.
+User-level update scheduler on top of topgrade, no sudo. topgrade always
+runs with `--config` pointing to a topmatic-owned file; the user's own
+`topgrade.toml` is never read. Commands run in the ephemeral tooling
+container; the host provides only `just` + `podman` (see
+[docs/environment.md](docs/environment.md)).
 
 ### Non-negotiables
 
 - First command in every shell: `export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"`
-- `just --list` is the command reference; `just check` before every commit
-- bd for tasks (`ready`/`--claim`/`close`), `bd remember` for decisions, `bd prime` to load context
-- Code, commits, messages: English. No comments in source (`#[command(about)]` for clap help)
-- TDD; **fixtures must be captured from real tool output, never invented** (a fabricated timestamp format once hid a bug)
-- Tests never touch real systemd/topgrade (stubs in tempdirs); host = integration (`just verify <profile>`). There is no devcontainer: `just check` needs a host Rust toolchain (the podman gate cannot run real systemd, so it fails and was removed)
+- `just --list` is the command reference; `just check` before every commit;
+  `just test-live` for the real-systemd layer
+- bd for tasks (`ready`/`--claim`/`close`), `bd remember` for decisions,
+  `bd prime` to load context
+- Code, commits, messages: English. No comments in source
+  (`#[command(about)]` for clap help)
+- TDD; fixtures must be captured from real tool output, never invented
+- Tests never touch real systemd/topgrade: stubs in tempdirs; the live
+  layer is `#[ignore]`-marked and opt-in
 
-### Architecture rules (anti-spaghetti, learned the hard way)
+### Costly mistakes (details in docs/)
 
-- One source of truth per concern: UI keybindings live in `tui/bindings.rs` and feed footer + help + a compile-time README cross-check; schedules/steps resolution lives in `domain/overlay.rs` and feeds argv, the runner, the dashboard and the editor. Never hand-write a second copy of what a registry already derives.
-- Domain layer stays pure (no IO): resolvers, deltas, argv and timestamp formatting are free functions with unit tests at the pyramid base; TUI modules only dispatch and render; persistence quirks (field omission, skip-if-empty) live at the serde/config edge, not sprinkled through business code.
-- External tool config keys must be verified against the REAL binary before shipping (topgrade's step-exclusion key is `disable`; an invented `ignore` was silently rejected and the run kept failing — the parse error listing the valid schema was the fixture).
-- Times: store UTC, render through `util::format_in` with the machine zone; tests use `FixedOffset`, never env mutation.
-- Host verification of TUI flows uses a python pty driver (fork + TIOCSWINSZ + key injection); diff frames make per-phase substring checks flaky, so assert on cumulative buffers or accept single-phase misses when unit tests already pin the behavior.
-- systemd `Type=oneshot` units stay `activating` for the whole run: `is-active` exits 3, plain `start` blocks until completion — detect via `show -p ActiveState`, start with `--no-block`, and treat `ExecMainStartTimestamp` as the run clock.
-- Keep production files small: test suites live in sibling `tests.rs`/`*_tests.rs` files (see `tui/app_tests.rs`), not thousand-line inline modules.
+- Production timers `topmatic@all-daily` and `topmatic@dev-daily` on this
+  host: never delete or disable without asking
+- Orphan cleanup only removes `topmatic@*` timers carrying topmatic's
+  schedule drop-in; anything else named `topmatic@*` is foreign, leave it
+- `topmatic sync`/TUI touch the real user systemd manager: dry-run first
+- Edition 2024: env mutation is unsafe in tests — use `Paths::with_bases`
 
-### Gotchas
+### Reference
 
-- Edition 2024: env mutation is unsafe in tests — use `Paths::with_bases`, never `set_var`
-- Pipes swallow cargo exit codes — `set -o pipefail` before `&&` chains
-- Production timers on this host are `topmatic@all-daily` and `topmatic@dev-daily` — never delete/disable without asking
-- Orphan cleanup only removes `topmatic@*` timers that carry topmatic's schedule drop-in (`topmatic@<p>.timer.d/10-schedule.conf`); anything else named `topmatic@*` is foreign (other tools) and must be left untouched, only reported
-- `topmatic sync`/TUI touch the real user systemd manager; dry-run first when verifying
-- README screenshots (`docs/assets/*.png`) are regenerated manually, not via just: `vhs docs/assets/*.tape` in the `topmatic-shots` distrobox (archlinux image), then `ffmpeg -i target/tapes/<x>.gif -vf reverse -frames:v 1` for the last frame (vhs PNG `Output` is unreliable). Recreate the box with: `distrobox create --name topmatic-shots --image docker.io/library/archlinux:latest` + `podman exec -u 0 topmatic-shots pacman -Sy --noconfirm vhs systemd ttf-dejavu nss gtk3 alsa-lib` + `cp /usr/bin/topgrade ~/.local/bin/` (topgrade is AUR-only; bakeoff details in beads memory `shot-container-bakeoff`)
+docs/README.md indexes: environment, development, testing, architecture
+and workflow. Prefer extending a doc over growing this file.

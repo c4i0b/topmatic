@@ -4,14 +4,14 @@ Layers, cheap to expensive (coverage without overlap — a behavior is pinned
 at the cheapest layer that can see it, and nowhere else):
 
 1. **Unit** — pure domain logic, sibling `tests.rs`/`*_tests.rs` files next
-   to the module (`src/domain/*`, `src/tui/app/app_tests.rs`, ...). No IO.
+  to the module (`src/domain/*`, `src/tui/app/app_tests.rs`, ...). No IO.
 2. **Integration** — `tests/runner_integration.rs`: real runner code
-   against stub topgrade binaries in tempdirs. Offline.
+  against stub topgrade binaries in tempdirs. Offline.
 3. **Live** — `tests/systemd_integration.rs`, `#[ignore]`-marked and run
-   only via `just test-live` (the container bridged to the host user
-   systemd session). This is real `systemctl --user` output feeding the
-   timestamp parser; it exists because the parser's job is exactly to eat
-   what real systemd prints.
+  only via `just test-live` (the container bridged to the host user
+  systemd session). This is real `systemctl --user` output feeding the
+  timestamp parser; it exists because the parser's job is exactly to eat
+  what real systemd prints.
 
 The default suite (`just test`) is offline and hermetic: it runs in the
 ephemeral container with no network and no real systemd. Tests never touch

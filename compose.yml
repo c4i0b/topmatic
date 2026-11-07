@@ -1,0 +1,21 @@
+services:
+  tooling:
+    image: topmatic/tooling:dev
+    build:
+      context: .
+      dockerfile: Containerfile
+    user: "0:0"
+    security_opt:
+      - label=disable
+    working_dir: /workspace
+    entrypoint: []
+    environment:
+      HOME: /tmp
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/run/user/1000}
+    volumes:
+      - .:/workspace:z
+      - cargo-cache:/usr/local/cargo
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/bus:${XDG_RUNTIME_DIR:-/run/user/1000}/bus
+
+volumes:
+  cargo-cache:

@@ -4,6 +4,7 @@ mod guard;
 mod list;
 mod reset;
 mod run;
+mod steps;
 mod sync;
 
 #[cfg(test)]
@@ -49,6 +50,8 @@ enum Command {
     },
     #[command(about = "List profiles with timer status")]
     List,
+    #[command(about = "Show what topgrade can update at user level on this machine")]
+    Steps,
     #[command(about = "Edit the config with $EDITOR, then sync")]
     Edit,
 }
@@ -62,6 +65,7 @@ pub fn run() -> anyhow::Result<()> {
         Some(Command::Doctor { repair }) => doctor::run(repair),
         Some(Command::Reset { all }) => reset::run(all),
         Some(Command::List) => list::run(),
+        Some(Command::Steps) => steps::run(),
         Some(Command::Edit) => edit::run(),
         None => crate::tui::run(),
     }

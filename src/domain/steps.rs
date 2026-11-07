@@ -54,6 +54,37 @@ pub fn is_privileged(step: &str) -> bool {
     PRIVILEGED_STEPS.contains(&step)
 }
 
+pub fn format_catalog_listing(
+    catalog: &[String],
+    covered: &std::collections::BTreeSet<String>,
+) -> String {
+    const COLUMNS: usize = 4;
+    const WIDTH: usize = 22;
+    let mut lines = Vec::new();
+    for chunk in catalog.chunks(COLUMNS) {
+        let cells: Vec<String> = chunk
+            .iter()
+            .map(|step| {
+                let marker = if covered.contains(step) { "*" } else { "" };
+                format!("{step}{marker}")
+            })
+            .collect();
+        let mut line = String::new();
+        for (index, cell) in cells.iter().enumerate() {
+            if index > 0 {
+                line.push(' ');
+            }
+            if index + 1 == cells.len() {
+                line.push_str(cell);
+            } else {
+                line.push_str(&format!("{cell:<WIDTH$}"));
+            }
+        }
+        lines.push(line.trim_end().to_string());
+    }
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +169,39 @@ mod tests {
         assert!(steps.contains(&"distrobox".to_string()));
         assert!(steps.contains(&"containers".to_string()));
         assert!(steps.contains(&"toolbx".to_string()));
+    }
+
+    #[test]
+    fn listing_marks_covered_steps_and_wraps() {
+        let catalog: Vec<String> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let covered: std::collections::BTreeSet<String> =
+            ["b".to_string(), "e".to_string()].into_iter().collect();
+        let text = format_catalog_listing(&catalog, &covered);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "five steps in four columns wrap to two rows"
+        );
+        assert!(
+            lines[0].starts_with("a  "),
+            "uncovered stays plain: {:?}",
+            lines[0]
+        );
+        assert!(
+            lines[0].contains("b*"),
+            "covered carries a star: {:?}",
+            lines[0]
+        );
+        assert_eq!(lines[1], "e*");
+    }
+
+    #[test]
+    fn listing_of_empty_catalog_is_empty() {
+        let covered = std::collections::BTreeSet::new();
+        assert_eq!(format_catalog_listing(&[], &covered), "");
     }
 }

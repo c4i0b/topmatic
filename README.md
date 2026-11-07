@@ -87,6 +87,7 @@ Topmatic shows the current state on the dashboard header and in `topmatic doctor
 ```sh
 topmatic          # TUI
 topmatic list     # profiles, next run, last status
+topmatic steps    # what topgrade can update at user level here
 topmatic doctor   # diagnose and repair unit drift
 topmatic sync     # converge systemd units to the config
 topmatic run <profile> [--dry-run]
@@ -132,14 +133,19 @@ are left alone and just reported.
 
 ## Development
 
+Host prerequisites: `just` and `podman`. Everything else (Rust toolchain,
+rustfmt, clippy, systemd-analyze) lives in the ephemeral tooling container.
+
 ```sh
-just check  # fmt + clippy + tests
+just image      # build the tooling container (once, layer-cached)
+just check      # fmt + clippy + offline test suite
+just test-live  # real-systemd layer (bridged to the host user session)
 ```
 
 `just --list` shows every recipe.
-Tests use stubs so they run anywhere.
-Exceptions: `tests/systemd_integration.rs` needs a real user systemd
-and `just smoke` drives the real TUI in a pty.
+A few recipes stay host-side because they need the real host:
+`deploy`, `verify`, `smoke` and the fixture recorders.
+See [docs/](docs/README.md) for environment, testing and architecture.
 
 ## License
 

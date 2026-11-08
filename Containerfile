@@ -1,7 +1,7 @@
 FROM cgr.dev/chainguard/wolfi-base AS gh
 RUN apk add --no-cache gh
 
-FROM docker.io/library/rust:1-slim
+FROM docker.io/library/rust:1.99-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends systemd python3 git curl ca-certificates \

@@ -28,5 +28,11 @@ jobs:
           git config --global credential.helper '!gh auth git-credential'
           git config --global user.name "topmatic-bump-bot"
           git config --global user.email "actions@users.noreply.github.com"
+      # GITHUB_TOKEN events do not trigger the ci workflow on the PR
+      # branch, so the full gate runs HERE and the merge below is the
+      # only thing after it. --no-merge: the merge is explicit below.
       - name: Bump dependencies and image tags
-        run: python3 tools/bump.py
+        run: |
+          python3 tools/bump.py --no-merge && \
+            gh pr merge "bump/$(date +%Y%m%d)" --squash --delete-branch || \
+            echo "no PR to merge (nothing to bump)"

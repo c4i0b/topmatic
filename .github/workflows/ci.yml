@@ -25,3 +25,15 @@ jobs:
           just --version || (curl -fsSL https://just.systems/install.sh | bash -s -- --to ~/.local/bin)
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           just check
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build flake package
+        run: nix build .#topmatic --accept-flake-config
+      - name: Smoke test
+        run: ./result/bin/topmatic --version

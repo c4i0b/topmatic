@@ -363,9 +363,9 @@ mod tests {
 
     #[test]
     fn run_status_reports_success_and_failure() {
-        let mut ok = Command::new("/bin/true");
+        let mut ok = Command::new("true");
         assert!(run_status_with_timeout(&mut ok, Duration::from_secs(5)).is_ok());
-        let mut fail = Command::new("/bin/false");
+        let mut fail = Command::new("false");
         let error = run_status_with_timeout(&mut fail, Duration::from_secs(5))
             .unwrap_err()
             .to_string();
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn run_output_captures_stdout_and_kills_a_hanging_command() {
-        let mut ok = Command::new("/bin/echo");
+        let mut ok = Command::new("echo");
         ok.arg("hello");
         let output = run_output_with_timeout(ok, Duration::from_secs(5)).unwrap();
         assert!(output.status.success());

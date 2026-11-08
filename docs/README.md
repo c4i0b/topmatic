@@ -8,4 +8,5 @@
 | [architecture.md](architecture.md) | live | Domain layer rules, registries, timestamps, systemd quirks. Consult before refactoring src/. |
 | [workflow.md](workflow.md) | live | Task tracking with beads. Consult when picking up or closing work. |
 | [aur.md](aur.md) | live | AUR packaging: prepared PKGBUILD, pending account, release-driven auto-update. Consult before touching packaging/aur or the aur workflow. |
+| [nix.md](nix.md) | live | Nix flake: cargoHash rules, nixbox distrobox, release interplay across AUR/nixpkgs/flake. Consult before releases that change dependencies. |
 | assets/ | reference | Screenshots used by the README, regenerated manually (see architecture.md). |

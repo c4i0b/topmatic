@@ -1,0 +1,32 @@
+name: bump
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      TOPMATIC_DIRECT: "1"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install tooling for the bump flow
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq systemd
+          just --version || (curl -fsSL https://just.systems/install.sh | bash -s -- --to ~/.local/bin)
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          git config --global credential.helper '!gh auth git-credential'
+          git config --global user.name "topmatic-bump-bot"
+          git config --global user.email "actions@users.noreply.github.com"
+      - name: Bump dependencies and image tags
+        run: python3 tools/bump.py

@@ -16,6 +16,7 @@ services:
       - .:/workspace:z
       - cargo-cache:/usr/local/cargo
       - ${HOME}/.cargo/credentials.toml:/usr/local/cargo/credentials.toml:ro,Z
+      - ${HOME}/.config/gh:/tmp/.config/gh:ro,Z
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/bus:${XDG_RUNTIME_DIR:-/run/user/1000}/bus
 
 volumes:

@@ -1,0 +1,36 @@
+name: nix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "nix/**"
+      - "repos/**"
+      - "default.nix"
+      - "flake.*"
+      - "Cargo.*"
+      - "tools/nix_channels_check.py"
+      - ".github/workflows/nix.yml"
+  pull_request:
+    paths:
+      - "nix/**"
+      - "repos/**"
+      - "default.nix"
+      - "flake.*"
+      - "Cargo.*"
+      - "tools/nix_channels_check.py"
+      - ".github/workflows/nix.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  channels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate all nix surfaces
+        run: python3 tools/nix_channels_check.py

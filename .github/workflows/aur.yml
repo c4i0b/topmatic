@@ -1,0 +1,81 @@
+name: aur
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aur-topmatic
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ vars.AUR_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install tooling
+        run: pacman -Syu --noconfirm --needed openssh
+
+      - name: Configure SSH
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 /root/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > /root/.ssh/aur
+          printf '%s\n' "$AUR_KNOWN_HOSTS" > /root/.ssh/known_hosts
+          chmod 600 /root/.ssh/aur /root/.ssh/known_hosts
+
+      - name: Clone AUR repository
+        run: git clone ssh://aur@aur.archlinux.org/topmatic.git "$RUNNER_TEMP/aur"
+
+      - name: Update PKGBUILD
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          pkgver="${RELEASE_TAG#v}"
+          if [[ ! "$pkgver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          current=$(sed -n 's/^pkgver=//p' "$RUNNER_TEMP/aur/PKGBUILD")
+          if [[ -n "$current" && "$(printf '%s\n' "$current" "$pkgver" | sort -V | tail -n1)" != "$pkgver" ]]; then
+            echo "AUR pkgver $current is not older than $pkgver; skipping"
+            exit 0
+          fi
+          curl -fL --retry 3 "https://github.com/c4i0b/topmatic/archive/refs/tags/v${pkgver}.tar.gz" -o "$RUNNER_TEMP/source.tar.gz"
+          sha256=$(sha256sum "$RUNNER_TEMP/source.tar.gz" | cut -d' ' -f1)
+          sed -i \
+            -e "s/^pkgver=.*/pkgver=$pkgver/" \
+            -e "s/^pkgrel=.*/pkgrel=1/" \
+            -e "s/^sha256sums=('.*')/sha256sums=('$sha256')/" \
+            "$RUNNER_TEMP/aur/PKGBUILD"
+          grep -E '^(pkgver|pkgrel|sha256sums)' "$RUNNER_TEMP/aur/PKGBUILD"
+
+      - name: Regenerate .SRCINFO
+        run: |
+          set -euo pipefail
+          useradd -m builder
+          chown -R builder:builder "$RUNNER_TEMP/aur"
+          runuser -u builder -- bash -c "cd '$RUNNER_TEMP/aur' && makepkg --printsrcinfo > .SRCINFO"
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aur"
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "AUR package already up to date"
+            exit 0
+          fi
+          git config user.name "topmatic release bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to ${{ github.event.release.tag_name }}"
+          GIT_SSH_COMMAND="ssh -i /root/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/root/.ssh/known_hosts" \
+            git push origin HEAD:master

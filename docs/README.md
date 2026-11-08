@@ -7,4 +7,5 @@
 | [testing.md](testing.md) | live | Test layers, offline default, live opt-in, fixture policy. Consult before adding or moving tests. |
 | [architecture.md](architecture.md) | live | Domain layer rules, registries, timestamps, systemd quirks. Consult before refactoring src/. |
 | [workflow.md](workflow.md) | live | Task tracking with beads. Consult when picking up or closing work. |
+| [aur.md](aur.md) | live | AUR packaging: prepared PKGBUILD, pending account, release-driven auto-update. Consult before touching packaging/aur or the aur workflow. |
 | assets/ | reference | Screenshots used by the README, regenerated manually (see architecture.md). |

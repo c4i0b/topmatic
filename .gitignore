@@ -12,3 +12,9 @@ Cargo.lock.bak
 
 # Beads interaction log: source of truth syncs via refs/dolt/data (bd dolt push)
 .beads/interactions.jsonl
+
+# makepkg artifacts from local packaging validation
+packaging/aur/src/
+packaging/aur/pkg/
+packaging/aur/*.tar.gz
+packaging/aur/*.pkg.tar.zst

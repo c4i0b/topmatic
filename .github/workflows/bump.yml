@@ -43,7 +43,7 @@ jobs:
             echo "bumped=false" >> "$GITHUB_OUTPUT"
           fi
       # cargoHash is content-derived from Cargo.lock: refresh it on the
-      # bump branch so the NUR channel (rolling main) never breaks.
+      # bump branch so the flake/default.nix channels (rolling main) never break.
       - name: Refresh nix cargoHash if the lockfile changed
         if: steps.bump.outputs.bumped == 'true'
         run: |

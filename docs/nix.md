@@ -1,30 +1,24 @@
-# Nix packaging (flake + default.nix + NUR)
+# Nix packaging (flake + default.nix)
 
 The repo ships `flake.nix` + `nix/package.nix`
 (`rustPlatform.buildRustPackage`, version read from `Cargo.toml`), so
 `nix run github:c4i0b/topmatic` works. The root `default.nix` exposes
 the same package without flakes (`nix-build`,
-`nix-shell -p (import ./.)`). `repos/c4i0b/default.nix` registers the
-same package in the [NUR](https://github.com/nix-community/NUR) as
-`nur.repos.c4i0b.topmatic`.
+`nix-shell -p (import ./.)`).
 
 ## Channel ladder
 
-flake (canonical, pin per user) → NUR (rolling main, community CI
-caches builds) → nixpkgs (when adoption justifies re-submission; the
-green expression is parked on fork branch `add-topmatic`).
-
-The NUR tracks the default branch with no pin and no release
-awareness: whatever main carries is what `nur.repos.c4i0b.*` users
-evaluate. Keeping main green is therefore the only NUR maintenance —
-enforced by the `nix` workflow, which validates all three surfaces.
+flake (canonical, pin per user) → nixpkgs (when adoption justifies
+re-submission; the green expression is parked on fork branch
+`add-topmatic`). Other community channels (NUR) can be added later
+from a dedicated repository; nothing in this repo depends on them.
 
 ## Validating all surfaces
 
-`tools/nix_channels_check.py` builds the flake, the `default.nix`
-shim and the NUR expression against the nixpkgs revision pinned in
-`flake.lock`, smoke-testing each output against the manifest version.
-CI runs it on every push/PR touching nix surfaces; locally:
+`tools/nix_channels_check.py` builds the flake and the `default.nix`
+shim against the nixpkgs revision pinned in `flake.lock`,
+smoke-testing each output against the manifest version. CI runs it on
+every push/PR touching nix surfaces; locally:
 
     podman run --rm -v "$PWD":/src:Z --workdir /src docker.io/nixos/nix \
       sh -c 'nix --extra-experimental-features "nix-command flakes" \

@@ -4,7 +4,6 @@
 Surfaces, all pinned to the same nixpkgs revision (flake.lock):
   flake   nix build .#topmatic
   compat  nix-build the root default.nix
-  nur     nix-build repos/<owner>/default.nix the way NUR evaluates it
 
 Fail-closed: any surface that fails to build or smoke-test (binary
 reports a version different from Cargo.toml) aborts with exit 1.
@@ -18,7 +17,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OWNER = "c4i0b"
 
 
 def die(msg: str) -> None:
@@ -58,7 +56,7 @@ def smoke(out_link: Path, want: str) -> None:
 
 def main() -> None:
     want = manifest_version()
-    url, nar = pinned_nixpkgs()
+    url = pinned_nixpkgs()[0]
     flakes = ["--extra-experimental-features", "nix-command flakes"]
 
     out = Path("/tmp") / "nix-check"
@@ -76,16 +74,6 @@ def main() -> None:
     if r.returncode != 0:
         die(f"default.nix build failed:\n{r.stderr}")
     smoke(legacy_out.resolve(), want)
-
-    expr = ("let pkgs = import (fetchTarball { url = \"%s\"; sha256 = "
-            "\"%s\"; }) {}; in (import %s/repos/%s/default.nix { "
-            "inherit pkgs; }).topmatic" % (url, nar, ROOT, OWNER))
-    nur_out = out / "nur"
-    r = run(["nix-build", "-E", expr, "-o", str(nur_out)],
-            capture_output=True, text=True)
-    if r.returncode != 0:
-        die(f"nur expression build failed:\n{r.stderr}")
-    smoke(nur_out.resolve(), want)
 
     print(f"all nix surfaces green on topmatic {want} "
           f"(nixpkgs {url.rsplit('/', 1)[-1].removesuffix('.tar.gz')[:12]})")

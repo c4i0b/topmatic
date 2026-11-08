@@ -25,28 +25,6 @@ bump:
 ship *args:
     {{runner}} python3 tools/release.py {{args}}
 
-# Regenerate the flake cargoHash (nix/package.nix) in a throwaway Nix container; idempotent
-flake-hash:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{invocation_dir()}}"
-    sed -i 's|cargoHash = "[^"]*";|cargoHash = "";|' "$root/nix/package.nix"
-    nix_run() {
-        podman run --rm -v "$root":/src:Z docker.io/nixos/nix \
-            nix --extra-experimental-features "nix-command flakes" \
-            build /src#topmatic --option sandbox false "$@"
-    }
-    got=$(nix_run 2>&1 \
-        | grep -oE "got: +sha256-[A-Za-z0-9+/=]+" | head -1 | awk "{print \$2}" || true)
-    if [ -z "$got" ]; then
-        git -C "$root" restore -- nix/package.nix
-        echo "abort: no cargoHash mismatch reported (build failed for another reason; nix/package.nix restored)" >&2
-        exit 1
-    fi
-    sed -i "s|cargoHash = \"\";|cargoHash = \"$got\";|" "$root/nix/package.nix"
-    nix_run --no-link
-    echo "cargoHash = $got (verified)"
-
 # Run the offline test suite (container or direct via TOPMATIC_DIRECT=1)
 test:
     {{runner}} cargo test

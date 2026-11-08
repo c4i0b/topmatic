@@ -7,14 +7,14 @@ on:
       - "nix/**"
       - "default.nix"
       - "flake.*"
-      - "tools/nix_channels_check.py"
+      - "tools/nix_check.py"
       - ".github/workflows/nix.yml"
   pull_request:
     paths:
       - "nix/**"
       - "default.nix"
       - "flake.*"
-      - "tools/nix_channels_check.py"
+      - "tools/nix_check.py"
       - ".github/workflows/nix.yml"
   release:
     types: [published]
@@ -36,7 +36,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Validate all nix surfaces
-        run: python3 tools/nix_channels_check.py
+        run: python3 tools/nix_check.py
 
   update:
     if: >-

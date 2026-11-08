@@ -39,14 +39,14 @@ for users in the README.
 
 ## Validation
 
-`tools/nix_channels_check.py` builds the flake and the `default.nix`
+`tools/nix_check.py` builds the flake and the `default.nix`
 shim against the `flake.lock`-pinned nixpkgs and smoke-tests the
 binary version against the pinned `nix/package.nix` version. CI runs
 it on pushes/PRs touching the nix surfaces; locally:
 
     podman run --rm -v "$PWD":/src:Z --workdir /src docker.io/nixos/nix \
       sh -c 'nix --extra-experimental-features "nix-command flakes" \
-      shell nixpkgs#python3 --command python3 tools/nix_channels_check.py'
+      shell nixpkgs#python3 --command python3 tools/nix_check.py'
 
 ## Gotchas learned the hard way
 

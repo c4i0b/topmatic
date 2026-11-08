@@ -10,10 +10,12 @@ points that `callPackage` the same expression, so
 
 ## How releases advance the channel
 
-`release: published` triggers `.github/workflows/nix-release.yml`:
-it verifies the tagged `Cargo.toml` matches the tag, runs `nix-update`
-(updates `version`, source hash and `cargoHash`, with a verification
-build), and commits the expression to main. Prereleases are excluded.
+`release: published` triggers the `update` job of
+`.github/workflows/nix.yml` (the same file guards manual expression
+changes with the `validate` job on push/PR): it verifies the tagged
+`Cargo.toml` matches the tag, runs `nix-update` (updates `version`,
+source hash and `cargoHash`, with a verification build), and commits
+the expression to main. Prereleases are excluded.
 Nothing else touches the nix files: the weekly dependency bump has no
 nix responsibilities (the pinned lockfile only changes at release
 time), and `flake.lock` (the nixpkgs pin) is not coupled to releases.

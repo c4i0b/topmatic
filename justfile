@@ -14,6 +14,13 @@ shell:
 # Full quality gate: fmt check + clippy + tests
 check: fmt-check clippy test
 
+# Cheap lint gate for the bump flow (alias)
+lint: fmt-check clippy
+
+# Bump dependencies and image tags; opens a PR that auto-merges on green CI
+bump:
+    {{runner}} python3 tools/bump.py
+
 # Run the offline test suite (container or direct via TOPMATIC_DIRECT=1)
 test:
     {{runner}} cargo test

@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      TOPMATIC_DIRECT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install systemd-analyze for calendar validation tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq systemd
+      - name: Full gate
+        run: |
+          just --version || (curl -fsSL https://just.systems/install.sh | bash -s -- --to ~/.local/bin)
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          just check

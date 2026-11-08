@@ -19,6 +19,17 @@ Containerfile bug, not an install-at-runtime.
 host: installed topmatic, topgrade in PATH, a real TTY for the TUI, python3.
 They run directly, never through the container.
 
+## Dependency bumps
+
+Weekly GitHub Action (`.github/workflows/bump.yml`): runs
+`tools/bump.py` (from the dependency-bump skill) with the runner's token,
+opens a PR and auto-merges once CI (`ci.yml`) is green — CI must stay a
+required check with no required reviews, or the solo auto-merge stalls.
+Local `just bump` runs the same flow in the container but stops at
+`git push`: the gh token is keyring-based and unreachable from containers
+(by model design); the Action path is the automated one.
+
+
 ## The live systemd bridge
 
 The user systemd manager cannot run inside the container (needs the host

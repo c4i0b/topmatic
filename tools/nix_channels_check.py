@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Validate every Nix surface of this repository. Stdlib only.
 
-Surfaces, all pinned to the same nixpkgs revision (flake.lock):
+Surfaces, both pinned to the same nixpkgs revision (flake.lock):
   flake   nix build .#topmatic
   compat  nix-build the root default.nix
 
-Fail-closed: any surface that fails to build or smoke-test (binary
-reports a version different from Cargo.toml) aborts with exit 1.
+The package is release-pinned (nix/package.nix owns version + hashes,
+sourced from the release tag), so the smoke test compares the binary
+version against the version pinned in nix/package.nix, not against
+main's Cargo.toml. Fail-closed: any failure aborts with exit 1.
 """
 from __future__ import annotations
 
@@ -36,11 +38,11 @@ def pinned_nixpkgs() -> tuple[str, str]:
     return url, node["narHash"]
 
 
-def manifest_version() -> str:
-    m = re.search(r'^version = "([^"]+)"',
-                  (ROOT / "Cargo.toml").read_text(), re.M)
+def pinned_version() -> str:
+    m = re.search(r'^\s*version = "([^"]+)"',
+                  (ROOT / "nix" / "package.nix").read_text(), re.M)
     if not m:
-        die("no version in Cargo.toml")
+        die("no version in nix/package.nix")
     return m.group(1)
 
 
@@ -55,7 +57,7 @@ def smoke(out_link: Path, want: str) -> None:
 
 
 def main() -> None:
-    want = manifest_version()
+    want = pinned_version()
     url = pinned_nixpkgs()[0]
     flakes = ["--extra-experimental-features", "nix-command flakes"]
 

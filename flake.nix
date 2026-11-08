@@ -17,14 +17,11 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+          topmatic = pkgs.callPackage ./nix/package.nix { };
         in
         {
-          topmatic = pkgs.callPackage ./nix/package.nix {
-            src = self;
-            inherit version;
-          };
-          default = self.packages.${system}.topmatic;
+          inherit topmatic;
+          default = topmatic;
         }
       );
 

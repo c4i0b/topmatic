@@ -36,9 +36,76 @@ Topmatic turns Topgrade into scheduled jobs you manage from a TUI.
 
 ## Install
 
-Topmatic installs from source and needs Rust 1.85 or newer.
+### Fedora (COPR)
 
-From the official repos where they ship a recent toolchain:
+```sh
+sudo dnf copr enable caiobruno/fedora-packages
+sudo dnf install topmatic
+```
+
+### Nix: just run it
+
+No install at all; downloads and runs the latest release:
+
+```sh
+nix run github:c4i0b/topmatic
+```
+
+### Nix: install into your profile
+
+```sh
+nix profile install github:c4i0b/topmatic
+```
+
+Both commands above serve the latest published release, not the
+development branch, and update when you rerun them.
+
+### Nix: add to your flake config
+
+```nix
+# flake.nix
+{
+  inputs.topmatic.url = "github:c4i0b/topmatic";
+
+  outputs = { nixpkgs, topmatic, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      specialArgs = { inherit topmatic; };
+      modules = [ ./configuration.nix ];
+    };
+  };
+}
+```
+
+```nix
+# configuration.nix
+{ topmatic, ... }:
+{
+  environment.systemPackages = [ topmatic.packages.x86_64-linux.default ];
+}
+```
+
+### Nix: add without flakes
+
+The same package, imported directly in a classic config:
+
+```nix
+let
+  topmatic = import (builtins.fetchTarball
+    "https://github.com/c4i0b/topmatic/archive/main.tar.gz") { };
+in
+{
+  environment.systemPackages = [ topmatic ];
+}
+```
+
+The fetched `default.nix` pins its own nixpkgs and builds the latest
+release, so no channel setup is needed.
+
+### From source (any distro)
+
+Needs Rust 1.85 or newer. From the official repos where they ship a
+recent toolchain:
 
 ```sh
 sudo dnf install rust cargo      # Fedora

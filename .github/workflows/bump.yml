@@ -20,9 +20,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install tooling for the bump flow
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq systemd
@@ -34,6 +31,8 @@ jobs:
       # GITHUB_TOKEN events do not trigger the ci workflow on the PR
       # branch, so the full gate runs HERE and the merge below is the
       # only thing after it. --no-merge: the merge is explicit below.
+      # No nix responsibilities: the nix package is release-pinned and
+      # advanced only by the nix-release workflow.
       - name: Bump dependencies and image tags
         id: bump
         run: |
@@ -42,24 +41,6 @@ jobs:
           else
             echo "bumped=false" >> "$GITHUB_OUTPUT"
           fi
-      # cargoHash is content-derived from Cargo.lock: refresh it on the
-      # bump branch so the flake/default.nix channels (rolling main) never break.
-      - name: Refresh nix cargoHash if the lockfile changed
-        if: steps.bump.outputs.bumped == 'true'
-        run: |
-          git fetch -q origin main
-          if git diff --quiet origin/main...HEAD -- Cargo.lock; then
-            echo "Cargo.lock unchanged; skipping"
-            exit 0
-          fi
-          python3 tools/nix_cargo_hash.py
-          if git diff --quiet -- nix/package.nix; then
-            echo "cargoHash unchanged; nothing to commit"
-            exit 0
-          fi
-          git add nix/package.nix
-          git commit -m "chore(nix): refresh cargoHash for the dependency bump"
-          git push
       - name: Merge
         if: steps.bump.outputs.bumped == 'true'
         run: gh pr merge "bump/$(date +%Y%m%d)" --squash --delete-branch

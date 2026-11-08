@@ -1,60 +1,50 @@
-# Nix packaging (flake + default.nix)
+# Nix packaging (release-pinned flake)
 
-The repo ships `flake.nix` + `nix/package.nix`
-(`rustPlatform.buildRustPackage`, version read from `Cargo.toml`), so
-`nix run github:c4i0b/topmatic` works. The root `default.nix` exposes
-the same package without flakes (`nix-build`,
-`nix-shell -p (import ./.)`).
+The Nix channel serves the **latest published release**, not main.
+`nix/package.nix` owns the whole pinned package: `version`,
+`fetchFromGitHub` on the `v${version}` tag, the source `hash` and the
+`cargoHash`. The flake and the root `default.nix` are thin entry
+points that `callPackage` the same expression, so
+`nix run github:c4i0b/topmatic`, `nix profile install` and plain
+`nix-build` all build the identical release.
 
-## Channel ladder
+## How releases advance the channel
 
-flake (canonical, pin per user) → nixpkgs (when adoption justifies
-re-submission; the green expression is parked on fork branch
-`add-topmatic`). Other community channels (NUR) can be added later
-from a dedicated repository; nothing in this repo depends on them.
+`release: published` triggers `.github/workflows/nix-release.yml`:
+it verifies the tagged `Cargo.toml` matches the tag, runs `nix-update`
+(updates `version`, source hash and `cargoHash`, with a verification
+build), and commits the expression to main. Prereleases are excluded.
+Nothing else touches the nix files: the weekly dependency bump has no
+nix responsibilities (the pinned lockfile only changes at release
+time), and `flake.lock` (the nixpkgs pin) is not coupled to releases.
 
-## Validating all surfaces
+## The three hashes
+
+| Hash | Covers | Changes when |
+|---|---|---|
+| `hash` (src) | extracted release source | every release (nix-update) |
+| `cargoHash` | vendored crates of the release `Cargo.lock` | release lockfile changes (nix-update) |
+| `flake.lock` narHash | the nixpkgs that builds it | deliberate nixpkgs upgrades |
+
+## Version semantics
+
+The version pinned in `nix/package.nix` is the channel's source of
+truth; `Cargo.toml` remains the project's. They synchronize at release
+time (the workflow verifies them). Consequence: between releases,
+main's `Cargo.toml` may be ahead (e.g. a prepared-but-unpublished
+release) while the channel still serves the last release. Documented
+for users in the README.
+
+## Validation
 
 `tools/nix_channels_check.py` builds the flake and the `default.nix`
-shim against the nixpkgs revision pinned in `flake.lock`,
-smoke-testing each output against the manifest version. CI runs it on
-every push/PR touching nix surfaces; locally:
+shim against the `flake.lock`-pinned nixpkgs and smoke-tests the
+binary version against the pinned `nix/package.nix` version. CI runs
+it on pushes/PRs touching the nix surfaces; locally:
 
     podman run --rm -v "$PWD":/src:Z --workdir /src docker.io/nixos/nix \
       sh -c 'nix --extra-experimental-features "nix-command flakes" \
       shell nixpkgs#python3 --command python3 tools/nix_channels_check.py'
-
-## cargoHash rules
-
-`cargoHash` in `nix/package.nix` covers the vendored crates from
-`Cargo.lock`:
-
-- version-only releases: hash unchanged, nothing to do
-- dependency changes (the weekly bump flow): hash must be
-  regenerated. The bump workflow does this automatically on the bump
-  branch (`tools/nix_cargo_hash.py`); manually, run the same script
-  with nix available (copy to container fs first: the script writes
-  between builds and bind mounts trip nix's source re-hash check):
-
-```
-podman run --rm -v "$PWD":/src:Z docker.io/nixos/nix sh -c '
-  cp -a /src /work && cd /work &&
-  nix --extra-experimental-features "nix-command flakes" \
-  shell nixpkgs#python3 --command python3 tools/nix_cargo_hash.py'
-```
-
-The script is fail-closed: it restores the original hash if the
-verification build fails or no mismatch is reported.
-
-## Validation: throwaway Nix container
-
-    podman run --rm -v "$PWD":/src:Z docker.io/nixos/nix \
-      nix --extra-experimental-features "nix-command flakes" \
-      build /src#topmatic --option sandbox false
-
-The stock `nixos/nix` image ships git (flake tree detection) and Nix;
-nothing persists and the host stays clean. For `default.nix`, plain
-`nix-build /src --option sandbox false` in the same container.
 
 ## Gotchas learned the hard way
 
@@ -68,3 +58,6 @@ nothing persists and the host stays clean. For `default.nix`, plain
   environment (`nativeCheckInputs = [ systemd ]` for
   `systemd-analyze`); `sandbox = false` locally masks this class of
   failure, a sandboxed build surfaces it.
+- The nixpkgs submission for this project is parked (closed by the
+  new-package maturity policy) on fork branch `add-topmatic`; its
+  expression is nearly identical to `nix/package.nix`.

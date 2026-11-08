@@ -21,6 +21,10 @@ lint: fmt-check clippy
 bump:
     {{runner}} python3 tools/bump.py
 
+# Release flow (release skill): ship plan --bump patch | ship prepare --bump X.Y.Z | ship publish --bump X.Y.Z --yes
+ship *args:
+    {{runner}} python3 tools/release.py {{args}}
+
 # Run the offline test suite (container or direct via TOPMATIC_DIRECT=1)
 test:
     {{runner}} cargo test

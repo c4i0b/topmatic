@@ -31,6 +31,27 @@ Local `just bump` runs the same flow in the container but stops at
 (by model design); the Action path is the automated one.
 
 
+## Releases
+
+`tools/release.py` (from the release skill) drives three stages through
+`just ship`:
+
+- `just ship plan --bump patch|minor|major|X.Y.Z` — read-only JSON state
+  (versions, tag, changelog section, tree).
+- `just ship prepare --bump X.Y.Z` — bumps Cargo.toml, refreshes
+  Cargo.lock via `cargo update --workspace` (never regex-bumped), dates
+  the `## [Unreleased]` changelog section and creates the
+  `release: vX.Y.Z` commit. Write the `[Unreleased]` section first:
+  release notes come from CHANGELOG.md (keep-a-changelog).
+- `just ship publish --bump X.Y.Z --yes` — the irreversible stage, gated
+  fail-closed: clean tree, tag absent, changelog section, HEAD is the
+  release commit, and CI green on that exact SHA. Zero CI runs on the
+  commit is a refusal by design, so the release commit must be pushed
+  and green before publish.
+
+crates.io publishing (`cargo publish`) is deliberately outside the
+script for now.
+
 ## The live systemd bridge
 
 The user systemd manager cannot run inside the container (needs the host

@@ -36,9 +36,21 @@ CI runs it on every push/PR touching nix surfaces; locally:
 `Cargo.lock`:
 
 - version-only releases: hash unchanged, nothing to do
-- dependency changes: hash must be regenerated — set it to `""`,
-  build once, copy the `got:` sha256 from the mismatch error, build
-  again (see the validation one-liner below)
+- dependency changes (the weekly bump flow): hash must be
+  regenerated. The bump workflow does this automatically on the bump
+  branch (`tools/nix_cargo_hash.py`); manually, run the same script
+  with nix available (copy to container fs first: the script writes
+  between builds and bind mounts trip nix's source re-hash check):
+
+```
+podman run --rm -v "$PWD":/src:Z docker.io/nixos/nix sh -c '
+  cp -a /src /work && cd /work &&
+  nix --extra-experimental-features "nix-command flakes" \
+  shell nixpkgs#python3 --command python3 tools/nix_cargo_hash.py'
+```
+
+The script is fail-closed: it restores the original hash if the
+verification build fails or no mismatch is reported.
 
 ## Validation: throwaway Nix container
 

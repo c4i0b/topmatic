@@ -20,6 +20,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install tooling for the bump flow
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq systemd
@@ -32,7 +35,34 @@ jobs:
       # branch, so the full gate runs HERE and the merge below is the
       # only thing after it. --no-merge: the merge is explicit below.
       - name: Bump dependencies and image tags
+        id: bump
         run: |
-          python3 tools/bump.py --no-merge && \
-            gh pr merge "bump/$(date +%Y%m%d)" --squash --delete-branch || \
-            echo "no PR to merge (nothing to bump)"
+          if python3 tools/bump.py --no-merge; then
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          fi
+      # cargoHash is content-derived from Cargo.lock: refresh it on the
+      # bump branch so the NUR channel (rolling main) never breaks.
+      - name: Refresh nix cargoHash if the lockfile changed
+        if: steps.bump.outputs.bumped == 'true'
+        run: |
+          git fetch -q origin main
+          if git diff --quiet origin/main...HEAD -- Cargo.lock; then
+            echo "Cargo.lock unchanged; skipping"
+            exit 0
+          fi
+          python3 tools/nix_cargo_hash.py
+          if git diff --quiet -- nix/package.nix; then
+            echo "cargoHash unchanged; nothing to commit"
+            exit 0
+          fi
+          git add nix/package.nix
+          git commit -m "chore(nix): refresh cargoHash for the dependency bump"
+          git push
+      - name: Merge
+        if: steps.bump.outputs.bumped == 'true'
+        run: gh pr merge "bump/$(date +%Y%m%d)" --squash --delete-branch
+      - name: Nothing to bump
+        if: steps.bump.outputs.bumped != 'true'
+        run: echo "no PR to merge (nothing to bump)"

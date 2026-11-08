@@ -22,9 +22,10 @@ They run directly, never through the container.
 ## Dependency bumps
 
 Weekly GitHub Action (`.github/workflows/bump.yml`): runs
-`tools/bump.py` (from the dependency-bump skill) with the runner's token,
-opens a PR and auto-merges once CI (`ci.yml`) is green — CI must stay a
-required check with no required reviews, or the solo auto-merge stalls.
+`tools/bump.py` (from the dependency-bump skill) with the runner's token
+and merges the PR after the full gate passes IN THE SAME JOB — events
+created with GITHUB_TOKEN do not trigger the ci workflow on the PR
+branch, so a required branch check would stall the auto-merge forever.
 Local `just bump` runs the same flow in the container but stops at
 `git push`: the gh token is keyring-based and unreachable from containers
 (by model design); the Action path is the automated one.

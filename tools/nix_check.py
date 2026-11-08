@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,11 +32,11 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=ROOT, check=False, **kw)
 
 
-def pinned_nixpkgs() -> tuple[str, str]:
+def pinned_nixpkgs() -> str:
     lock = json.loads((ROOT / "flake.lock").read_text())
     node = lock["nodes"]["nixpkgs"]["locked"]
     url = f"https://github.com/NixOS/nixpkgs/archive/{node['rev']}.tar.gz"
-    return url, node["narHash"]
+    return url
 
 
 def pinned_version() -> str:
@@ -58,11 +59,10 @@ def smoke(out_link: Path, want: str) -> None:
 
 def main() -> None:
     want = pinned_version()
-    url = pinned_nixpkgs()[0]
+    url = pinned_nixpkgs()
     flakes = ["--extra-experimental-features", "nix-command flakes"]
 
-    out = Path("/tmp") / "nix-check"
-    out.mkdir(exist_ok=True)
+    out = Path(tempfile.mkdtemp(prefix="nix-check-"))
 
     r = run(["nix", *flakes, "build", f"{ROOT}#topmatic",
              "--no-link", "--print-out-paths"], capture_output=True, text=True)

@@ -453,8 +453,15 @@ def main() -> int:
     if git(root, "diff", "--cached", "--quiet").returncode == 0:
         sys.exit("FAIL: nothing staged to commit (unexpected)")
     body = build_pr_body(root, base, rewrites, findings)
-    title = "chore: bump dependencies and image tags"
-    if git(root, "commit", "-m", title, "-m", body).returncode != 0:
+    # finance dep-bump PR style: "bump(deps): ..." title, automated-check
+    # commit message, review-flag suffix when majors need eyes
+    n_major = sum(1 for d in collect_deps(root, base)
+                  if bump_type(d[1], d[2]) == "major")
+    title = "bump(deps): upgrade dependencies and image tags"
+    if n_major:
+        title += f" [{n_major} MAJOR — review before merge]"
+    commit = "bump(deps): upgrade dependencies and image tags (automated check)"
+    if git(root, "commit", "-m", commit, "-m", body).returncode != 0:
         sys.exit("FAIL: git commit failed")
     # prune first: a leftover remote-tracking ref makes force-with-lease
     # fail with "stale info" after the branch was deleted post-merge
@@ -469,7 +476,7 @@ def main() -> int:
         return 0
 
     pr = subprocess.run(["gh", "pr", "create", "--title", title,
-                         "--body", body],
+                         "--body", body, "--label", "dependencies"],
                         cwd=root, text=True)
     if pr.returncode != 0:
         sys.exit("FAIL: gh pr create failed (is gh authenticated where "

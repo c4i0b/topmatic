@@ -43,7 +43,14 @@ jobs:
           fi
       - name: Merge
         if: steps.bump.outputs.bumped == 'true'
-        run: gh pr merge "bump/$(date +%Y%m%d)" --squash --delete-branch
+        run: |
+          # bump.py exits 0 both when it opened a PR and when there was
+          # nothing to bump — only merge when the branch PR exists
+          if gh pr view "bump/$(date +%Y%m%d)" >/dev/null 2>&1; then
+            gh pr merge "bump/$(date +%Y%m%d)" --squash --delete-branch
+          else
+            echo "nothing to bump (no PR to merge)"
+          fi
       - name: Nothing to bump
         if: steps.bump.outputs.bumped != 'true'
         run: echo "no PR to merge (nothing to bump)"

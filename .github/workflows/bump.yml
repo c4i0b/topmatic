@@ -15,6 +15,8 @@ jobs:
     env:
       TOPMATIC_DIRECT: "1"
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Pinned for reproducibility; bump deliberately as part of a change.
+      JUST_VERSION: "1.44.0"
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -27,12 +29,9 @@ jobs:
           if ! command -v just >/dev/null 2>&1; then
             echo "just not found on the runner image; installing"
             fetch() { curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors "$@"; }
-            if fetch https://api.github.com/repos/casey/just/releases/latest \
-                | grep -oP '(?<=tag_name": ")[^"]+' > /tmp/just_tag \
-              && tag=$(cat /tmp/just_tag) \
-              && fetch "https://github.com/casey/just/releases/download/${tag}/just-${tag}-x86_64-unknown-linux-musl.tar.gz" \
+            if fetch "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
                 | tar -xz -C "$HOME/.local/bin" just; then
-              echo "installed just ${tag} from GitHub releases"
+              echo "installed just ${JUST_VERSION} from GitHub releases"
             elif fetch https://just.systems/install.sh | bash -s -- --to "$HOME/.local/bin"; then
               echo "installed just via just.systems installer"
             else
